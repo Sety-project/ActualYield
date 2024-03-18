@@ -2,13 +2,14 @@ import asyncio
 import html
 import os
 import sys
-from datetime import timedelta, date, datetime, timezone
+from datetime import timedelta, date, datetime, timezone, time
 
 import matplotlib
 import pandas as pd
 import streamlit as st
 import yaml
 
+from plex.plex import PnlExplainer
 from utils.async_utils import safe_gather
 from utils.db import CsvDB
 from plex.debank_api import DebankAPI
@@ -55,21 +56,32 @@ with snapshot_tab:
                               for address in addresses],
                             n=st.session_state.parameters['input_data']['async']['gather_limit'])
                         max_updated = datetime.now(tz=timezone.utc) - timedelta(minutes=st.session_state.parameters['plex']['update_frequency'])
+
+                        # retrieve cache for addresses that have been updated recently
+                        cached_snapshots = {address: obj.parse_snapshot(last_update[1])
+                                            for address, last_update in zip(addresses, last_updated)
+                                            if last_update[0] >= max_updated}
+
+                        for address in cached_snapshots:
+                            st.warning(f"We only update once every {st.session_state.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
+
+                        # fetch for addresses that need to be refreshed
                         addresses_to_refresh = [address
-                                  for address, last_update in zip(addresses, last_updated)
-                                  if last_update < max_updated]
+                                                for address, last_update in zip(addresses, last_updated)
+                                                if last_update[0] < max_updated]
+
                         if not addresses_to_refresh:
-                            st.warning(f"We only update once every {st.session_state.parameters['plex']['update_frequency']} minutes. No addresses to refresh")
-                            return {}
+                            return cached_snapshots
 
                         # fetch snapshots
                         json_results = await safe_gather(
-                            [obj.fetch_position_snapshot(address)
+                            [st.fetch_position_snapshot(address)
                               for address in addresses_to_refresh],
                             n=st.session_state.parameters['input_data']['async']['gather_limit'])
-                        dict_results = [obj.parse_snapshot(json_result) for json_result in json_results]
+                        refreshed_snapshots = {address: obj.parse_snapshot(refreshed_snapshots)
+                                            for address, refreshed_snapshots in zip(addresses_to_refresh, json_results)}
 
-                        return dict(zip(addresses, dict_results))
+                        return cached_snapshots | refreshed_snapshots
 
                     snapshot_by_address = asyncio.run(position_snapshots())
                     for address, snapshot in snapshot_by_address.items():
@@ -86,3 +98,19 @@ with snapshot_tab:
 
 with risk_tab:
     snapshot = None
+
+with plex_tab:
+    date_col, time_col = st.columns(2)
+    now_datetime = datetime.now()
+    with time_col:
+        start_time = st.time_input("start time", value=now_datetime.time())
+        end_time = st.time_input("end time", value=now_datetime.time())
+    with date_col:
+        start_date = st.date_input("start date", value=now_datetime - timedelta(days=1))
+        end_date = st.date_input("end date", value=now_datetime)
+    start_datetime = datetime.combine(start_date, start_time)
+    end_datetime = datetime.combine(end_date, end_time)
+
+    for address in addresses:
+        args = asyncio.run(st.db.query_explain_data(address, start_datetime, end_datetime))
+        PnlExplainer().explain(*args)
