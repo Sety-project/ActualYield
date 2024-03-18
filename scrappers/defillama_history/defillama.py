@@ -12,7 +12,7 @@ import yaml
 
 from research.research_engine import FileData
 from scrappers.defillama_history.coingecko import myCoinGeckoAPI
-from utils.postgres import SqlApi, Connection
+from utils.db import SqlApi, Connection
 from utils.streamlit_utils import MyProgressBar
 
 try:

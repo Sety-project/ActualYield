@@ -3,31 +3,32 @@ import os.path
 import typing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 import aiohttp
 import asyncio
 
 import pandas as pd
 import yaml
+from pandas import DataFrame
+
+from utils.db import CsvDB
 
 
 class DebankAPI:
-    def __init__(self, debank_access_key: str, config_path: Path = None):
-        if config_path:
-            with open(config_path, "r") as ymlfile:
-                self.config = yaml.safe_load(ymlfile)
+    endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
+    def __init__(self, debank_access_key: str):
+        with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), "r") as ymlfile:
+            self.config = yaml.safe_load(ymlfile)
 
         self.api_url = "https://pro-openapi.debank.com/v1"
         self.headers = {
             "accept": "application/json",
             "AccessKey": debank_access_key,
         }
-        if not os.path.isdir('data'):
-            os.mkdir(os.path.join(os.sep, os.getcwd(), 'data'))
-            os.chmod('data', 0o777)
+        self.db = CsvDB()
 
-    async def fetch_position_snapshot(self, address: str, write_to_json=True) -> pd.DataFrame:
+    async def fetch_position_snapshot(self, address: str, write_to_json=True) -> dict:
         '''
         Fetches the position snapshot for a given address from the Debank API
         Stores the result in a json file if write_to_json is True
@@ -38,26 +39,33 @@ class DebankAPI:
                                    params={"id": address}) as response:
                 return await response.json()
 
-        endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
+        now_time = datetime.now(tz=timezone.utc).timestamp()
         async with aiohttp.ClientSession() as session:
             json_results = await asyncio.gather(*[call_position_endpoint(f'user/{endpoint}')
-                                       for endpoint in endpoints])
+                                       for endpoint in self.endpoints])
 
+        dict_result = {'timestamp': now_time} | dict(zip(self.endpoints, json_results))
+        if write_to_json:
+            await self.db.insert_snapshot(dict_result, address)
+
+        return dict_result
+
+    def query_explain_data(self, address: str, start_date: datetime, end_date: datetime = datetime.now()) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        start_snapshot, end_snapshot, transactions = self.db.query_explain_data(address, start_date, end_date)
+        return self.parse_snapshot(start_snapshot), self.parse_snapshot(end_snapshot), pd.DataFrame(transactions)
+
+    def parse_snapshot(self, dict_result: dict) -> pd.DataFrame:
+        timestamp = dict_result.pop('timestamp')
         res_list = sum(
             (
                 getattr(self, f'parse_{endpoint}')(res)
-                for endpoint, res in zip(endpoints, json_results)
+                for endpoint, res in dict_result.items()
             ),
             [],
         )
         df_result = pd.DataFrame(res_list)
-        now_time = datetime.now(tz=timezone.utc)
-
-        if write_to_json:
-            with open(os.path.join(os.sep, 'data', f"results_{now_time.timestamp()}.json"), 'w') as f:
-                json.dump({'timestamp': now_time} | zip(endpoints, json_results), f)
-
-        df_result['updated'] = now_time
+        df_result['timestamp'] = timestamp
+        df_result = df_result[~df_result['protocol'].isin(self.config['plex']['redundant_protocols'])]
         return df_result
 
     # TODO:

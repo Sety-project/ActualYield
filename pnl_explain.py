@@ -10,7 +10,7 @@ import streamlit as st
 import yaml
 
 from utils.async_utils import safe_gather
-from utils.postgres import SqlApi, CsvDB
+from utils.db import CsvDB
 from plex.debank_api import DebankAPI
 from utils.streamlit_utils import authentification_sidebar, load_parameters
 
@@ -27,6 +27,7 @@ snapshot_tab, risk_tab, plex_tab = st.tabs(
 
 if 'stage' not in st.session_state:
     st.session_state.stage = 0
+    st.db = CsvDB()
 
 if 'my_addresses' not in st.secrets:
     addresses = st.sidebar.text_area("addresses", help='Enter multiple strings on separate lines').split('\n')
@@ -45,9 +46,12 @@ with snapshot_tab:
                     obj = DebankAPI(debank_key)
 
                     async def position_snapshots() -> dict[str, pd.DataFrame]:
-                        # only update once every 'update_frequency' minutes
+                        '''
+                        fetches from debank and write to json to disk
+                        returns parsed latest snapshot as a dict[address,DataFrames]
+                        only update once every 'update_frequency' minutes'''
                         last_updated = await safe_gather(
-                            [st.session_state.database.last_updated(address)
+                            [st.db.last_updated(address)
                               for address in addresses],
                             n=st.session_state.parameters['input_data']['async']['gather_limit'])
                         max_updated = datetime.now(tz=timezone.utc) - timedelta(minutes=st.session_state.parameters['plex']['update_frequency'])
@@ -59,18 +63,13 @@ with snapshot_tab:
                             return {}
 
                         # fetch snapshots
-                        results = await safe_gather(
+                        json_results = await safe_gather(
                             [obj.fetch_position_snapshot(address)
                               for address in addresses_to_refresh],
                             n=st.session_state.parameters['input_data']['async']['gather_limit'])
+                        dict_results = [obj.parse_snapshot(json_result) for json_result in json_results]
 
-                        # write to db
-                        await safe_gather(
-                            [st.session_state.database.insert_snapshot(result, address)
-                              for address, result in zip(addresses_to_refresh, results)],
-                            n=st.session_state.parameters['input_data']['async']['gather_limit'])
-
-                        return dict(zip(addresses, results))
+                        return dict(zip(addresses, dict_results))
 
                     snapshot_by_address = asyncio.run(position_snapshots())
                     for address, snapshot in snapshot_by_address.items():
