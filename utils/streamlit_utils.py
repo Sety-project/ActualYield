@@ -1,6 +1,7 @@
 import os
 import threading
 from copy import deepcopy
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,7 @@ import seaborn as sns
 import streamlit as st
 import yaml
 from plotly import express as px
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 from scrappers.defillama_history.coingecko import myCoinGeckoAPI
 from utils.telegram_bot import check_whitelist
@@ -108,6 +110,21 @@ def prompt_pool_filtering() -> dict:
     result['apyMean30d'] = st.number_input("apyMean30d threshold", value=2., help="minimum apyMean30d to include in universe")
 
     return result
+
+
+def prompt_plex_interval():
+    date_col, time_col = st.columns(2)
+    now_datetime = datetime.now()
+    with time_col:
+        start_time = st.time_input("start time", value=now_datetime.time())
+        end_time = st.time_input("end time", value=now_datetime.time())
+    with date_col:
+        start_date = st.date_input("start date", value=now_datetime - timedelta(days=1))
+        end_date = st.date_input("end date", value=now_datetime)
+    start_datetime = datetime.combine(start_date, start_time)
+    end_datetime = datetime.combine(end_date, end_time)
+
+    return start_datetime, end_datetime
 
 
 def prettify_metadata(input_df: pd.DataFrame) -> pd.DataFrame:
@@ -221,6 +238,41 @@ def display_heatmap(grid: pd.DataFrame, metrics, ind, col, filtering):
 
     return fig
 
+
+def display_risk_pivot(grid: pd.DataFrame, rows_group=[], col_group=[]):
+    gb = GridOptionsBuilder()
+    gb.configure_grid_options(pivotMode=True, rowSelection='multiple', columnSelection='multiple', enableRangeSelection=True)
+    gb.configure_selection(selection_mode='multi')
+    gb.configure_side_bar(defaultToolPanel='columns')
+    gb.configure_default_column(
+        resizable=True,
+        filterable=True,
+        sortable=True,
+        editable=False,
+        groupable=True
+    )
+    columns_defs = {
+        # rows
+        'underlying': {'field': 'underlying', 'rowGroup': True},
+        'asset': {'field': 'asset', 'rowGroup': True},
+        'protocol': {'field': 'protocol', 'rowGroup': True},
+        'chain': {'field': 'chain', 'rowGroup': True},
+        'hold_mode': {'field': 'hold_mode'},
+        'type': {'field': 'type'},
+        # cols
+        'address': {'field': 'address', 'pivot': True},
+        # values
+        'value': {'field': 'value', 'aggFunc': 'sum', 'type': ["numericColumn"],'cellRenderer': 'agGroupCellRenderer', 'cellRendererParams': {'innerRenderer': 'sumRenderer'}},
+        'amount': {'field': 'price', 'type': ["numericColumn"]},
+        'price': {'field': 'price', 'type': ["numericColumn"]},
+    }
+    for col in columns_defs.values():
+        gb.configure_column(**col)
+
+    go = gb.build()
+    grid['value'] = grid['value'].astype(int)
+    grid = grid.sort_values(by='value', ascending=False)
+    AgGrid(grid, gridOptions=go, height=1000)
 
 class MyProgressBar:
     '''A progress bar with increment progress (why did i have to do that...)'''

@@ -1,8 +1,9 @@
 .streamlit/secrets*
 .venv/
 .idea/
-logs/
+data/
 *.csv
+*.json
 *.xls*
 
 

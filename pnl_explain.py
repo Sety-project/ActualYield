@@ -13,22 +13,25 @@ from plex.plex import PnlExplainer
 from utils.async_utils import safe_gather
 from utils.db import CsvDB
 from plex.debank_api import DebankAPI
-from utils.streamlit_utils import authentification_sidebar, load_parameters
 
 assert (sys.version_info >= (3, 10)), "Please use Python 3.10 or higher"
 
+if 'stage' not in st.session_state:
+    st.set_page_config(layout="wide")
+    st.session_state.db = CsvDB()
+    st.session_state.api = DebankAPI(st.session_state.db)
+    st.session_state.pnl_explainer = PnlExplainer()
+    st.session_state.stage = 0
+
+from utils.streamlit_utils import authentification_sidebar, load_parameters, prompt_initialization, \
+    prompt_plex_interval, display_risk_pivot
+
 pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
-
-st.session_state.database = CsvDB()
 authentification_sidebar()
 
 snapshot_tab, risk_tab, plex_tab = st.tabs(
     ["snapshot", "risk", "pnl explain"])
-
-if 'stage' not in st.session_state:
-    st.session_state.stage = 0
-    st.db = CsvDB()
 
 if 'my_addresses' not in st.secrets:
     addresses = st.sidebar.text_area("addresses", help='Enter multiple strings on separate lines').split('\n')
@@ -38,57 +41,42 @@ addresses = [address for address in addresses if address[:2] == "0x"]
 
 with snapshot_tab:
     with st.form("snapshot_form"):
-        if st.form_submit_button("take snapshot"):
+        refresh = st.checkbox("fetch from debank", value=False, help="fetch from debank costs credits !")
+        if st.form_submit_button("get latest snapshot", help="either from debank or from db"):
             if st.session_state.authentification == 'verified':
                 with st.spinner(f"Taking snapshots"):
                     debank_key = st.text_input("debank key",
                                                   value=st.secrets['debank'] if 'debank' in st.secrets else '',
                                                   help="you think i am going to pay for you?")
-                    obj = DebankAPI(debank_key)
 
-                    async def position_snapshots() -> dict[str, pd.DataFrame]:
+                    async def position_snapshot(address: str) -> pd.DataFrame:
                         '''
-                        fetches from debank and write to json to disk
-                        returns parsed latest snapshot as a dict[address,DataFrames]
-                        only update once every 'update_frequency' minutes'''
-                        last_updated = await safe_gather(
-                            [st.db.last_updated(address)
-                              for address in addresses],
-                            n=st.session_state.parameters['input_data']['async']['gather_limit'])
-                        max_updated = datetime.now(tz=timezone.utc) - timedelta(minutes=st.session_state.parameters['plex']['update_frequency'])
+                        fetch from debank if not recently updated, or db if recently updated or refresh=False
+                        then write to json to disk
+                        returns parsed latest snapshot summed across all addresses
+                        only update once every 'update_frequency' minutes
+                        '''
+                        last_update = st.session_state.db.last_updated(address)
+                        updated_at = last_update[0]
+                        snapshot = st.session_state.api.parse_snapshot(last_update[1])
 
-                        # retrieve cache for addresses that have been updated recently
-                        cached_snapshots = {address: obj.parse_snapshot(last_update[1])
-                                            for address, last_update in zip(addresses, last_updated)
-                                            if last_update[0] >= max_updated}
+                        # retrieve cache for addresses that have been updated recently, and always if refresh=False
+                        max_updated = datetime.now(tz=timezone.utc) - timedelta(
+                            minutes=st.session_state.parameters['plex']['update_frequency'])
+                        if refresh:
+                            if updated_at < max_updated and refresh:
+                                snapshot_dict = await st.session_state.api.fetch_position_snapshot(address, debank_key, write_to_json=True)
+                                snapshot = st.session_state.api.parse_snapshot(snapshot_dict)
+                            else:
+                                st.warning(f"We only update once every {st.session_state.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
+                        snapshot['address'] = address
+                        return snapshot
 
-                        for address in cached_snapshots:
-                            st.warning(f"We only update once every {st.session_state.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
-
-                        # fetch for addresses that need to be refreshed
-                        addresses_to_refresh = [address
-                                                for address, last_update in zip(addresses, last_updated)
-                                                if last_update[0] < max_updated]
-
-                        if not addresses_to_refresh:
-                            return cached_snapshots
-
-                        # fetch snapshots
-                        json_results = await safe_gather(
-                            [st.fetch_position_snapshot(address)
-                              for address in addresses_to_refresh],
-                            n=st.session_state.parameters['input_data']['async']['gather_limit'])
-                        refreshed_snapshots = {address: obj.parse_snapshot(refreshed_snapshots)
-                                            for address, refreshed_snapshots in zip(addresses_to_refresh, json_results)}
-
-                        return cached_snapshots | refreshed_snapshots
-
-                    snapshot_by_address = asyncio.run(position_snapshots())
-                    for address, snapshot in snapshot_by_address.items():
-                        st.write(address)
-                        st.dataframe(snapshot)
-                    st.session_state.snapshots = snapshot_by_address
-                    st.session_state.stage = 1
+                    snapshots = asyncio.run(safe_gather([position_snapshot(address) for address in addresses],
+                                           n=st.session_state.parameters['input_data']['async']['gather_limit']))
+                    snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
+                    st.dataframe(snapshot)
+                    st.session_state.snapshot = snapshot
             else:
                 st.warning(
                     html.unescape(
@@ -97,20 +85,38 @@ with snapshot_tab:
                 )
 
 with risk_tab:
-    snapshot = None
+    # dynamic categorization
+    with st.form("categorization_form"):
+        if 'snapshot' in st.session_state:
+            st.write("Risk pivot table: group exposures by underlying")
+            st.session_state.snapshot['underlying'] = st.session_state.snapshot['asset'].map(
+                st.session_state.pnl_explainer.categories)
+            display_risk_pivot(st.session_state.snapshot)
+
+            st.write("Edit 'underlying' below to group exposures by underlying")
+            categorization = pd.DataFrame({'underlying': {coin: coin
+                                           for coin in st.session_state.snapshot['asset'].unique()
+                                           if coin not in st.session_state.pnl_explainer.categories}
+                                          | st.session_state.pnl_explainer.categories})
+            categorization['exposure'] = st.session_state.snapshot.groupby('asset').sum()['value']
+            edited_categorization = st.data_editor(categorization, use_container_width=True)['underlying'].to_dict()
+            if st.form_submit_button(f"Override categorization"):
+                st.session_state.pnl_explainer.categories = edited_categorization
+                with open(st.session_state.pnl_explainer.categories_path, 'w') as f:
+                    yaml.dump(edited_categorization, f)
+                st.success("Categories updated (not exposure!)")
+                st.session_state.stage = 1
 
 with plex_tab:
-    date_col, time_col = st.columns(2)
-    now_datetime = datetime.now()
-    with time_col:
-        start_time = st.time_input("start time", value=now_datetime.time())
-        end_time = st.time_input("end time", value=now_datetime.time())
-    with date_col:
-        start_date = st.date_input("start date", value=now_datetime - timedelta(days=1))
-        end_date = st.date_input("end date", value=now_datetime)
-    start_datetime = datetime.combine(start_date, start_time)
-    end_datetime = datetime.combine(end_date, end_time)
+    start_datetime, end_datetime = prompt_plex_interval()
+    if 'snapshot' in st.session_state:
+        results = {}
+        for address in addresses:
+            data = st.session_state.db.query_explain_data(address, start_datetime, end_datetime)
+            start_snapshot = st.session_state.api.parse_snapshot(data['start_snapshot'])
+            end_snapshot = st.session_state.api.parse_snapshot(data['end_snapshot'])
+            results[address] = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
+            st.dataframe(results[address][0])
+            st.dataframe(results[address][1])
+            st.dataframe(results[address][2])
 
-    for address in addresses:
-        args = asyncio.run(st.db.query_explain_data(address, start_datetime, end_datetime))
-        PnlExplainer().explain(*args)

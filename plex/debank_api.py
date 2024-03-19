@@ -17,25 +17,26 @@ from utils.db import CsvDB
 
 class DebankAPI:
     endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
-    def __init__(self, debank_access_key: str):
+    api_url = "https://pro-openapi.debank.com/v1"
+    def __init__(self, db: CsvDB):
         with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), "r") as ymlfile:
             self.config = yaml.safe_load(ymlfile)
 
-        self.api_url = "https://pro-openapi.debank.com/v1"
-        self.headers = {
-            "accept": "application/json",
-            "AccessKey": debank_access_key,
-        }
-        self.db = CsvDB()
+        self.db = db
 
-    async def fetch_position_snapshot(self, address: str, write_to_json=True) -> dict:
+    async def fetch_position_snapshot(self, address: str, debank_key: str, write_to_json=True) -> dict:
         '''
         Fetches the position snapshot for a given address from the Debank API
         Stores the result in a json file if write_to_json is True
         Parses the result into a pandas DataFrame and returns it
         '''
+
         async def call_position_endpoint(endpoint: str) -> typing.Any:
-            async with session.get(f'{self.api_url}/{endpoint}', headers=self.headers,
+            async with session.get(url=f'{self.api_url}/{endpoint}',
+                                   headers={
+                                       "accept": "application/json",
+                                       "AccessKey": debank_key,
+                                   },
                                    params={"id": address}) as response:
                 return await response.json()
 
@@ -46,7 +47,7 @@ class DebankAPI:
 
         dict_result = {'timestamp': now_time} | dict(zip(self.endpoints, json_results))
         if write_to_json:
-            await self.db.insert_snapshot(dict_result, address)
+            self.db.insert_snapshot(dict_result, address)
 
         return dict_result
 
@@ -55,7 +56,9 @@ class DebankAPI:
         return self.parse_snapshot(start_snapshot), self.parse_snapshot(end_snapshot), pd.DataFrame(transactions)
 
     def parse_snapshot(self, dict_result: dict) -> pd.DataFrame:
-        timestamp = dict_result.pop('timestamp')
+        if not dict_result:
+            return pd.DataFrame()
+        timestamp = int(dict_result.pop('timestamp'))
         res_list = sum(
             (
                 getattr(self, f'parse_{endpoint}')(res)
@@ -138,7 +141,7 @@ class DebankAPI:
                 #'description': portfolio_item['detail']['description'],
                 'hold_mode': 'cash',
                 'type': 'nft',
-                'asset': position['inner_id'],
+                'asset': position['name'],
                 'amount': position['amount'],
                 'price': position['usd_price'] if 'usd_price' in position else 0.0,
                 'value': position['amount'] * position['usd_price'],
