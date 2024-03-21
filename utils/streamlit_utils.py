@@ -239,9 +239,23 @@ def display_heatmap(grid: pd.DataFrame, metrics, ind, col, filtering):
     return fig
 
 
-def display_risk_pivot(grid: pd.DataFrame, rows_group=[], col_group=[]):
+def display_pivot(grid: pd.DataFrame, rows: list[str], columns: list[str], values: list[str], hidden: list[str]):
     gb = GridOptionsBuilder()
-    gb.configure_grid_options(pivotMode=True, rowSelection='multiple', columnSelection='multiple', enableRangeSelection=True)
+    options_dict = {
+        "pivotMode": True,
+        "rowSelection": 'multiple',
+        "columnSelection": 'multiple',
+        "suppressAggFuncInHeader": True,
+        "pivotColumnGroupTotals": "after",
+        "pivotRowTotals": "before",
+        "enableRangeSelection": True,
+        "groupIncludeTotalFooter": True,  # show total footer for each group
+        "groupIncludeGroupFooter": True,  # show group footer for each group
+        "groupAggFields": values,  # fields to aggregate for group footers
+        "groupAggFunc": 'sum',  # aggregation function to use for group footers
+    }
+    gb.configure_grid_options(**options_dict)
+
     gb.configure_selection(selection_mode='multi')
     gb.configure_side_bar(defaultToolPanel='columns')
     gb.configure_default_column(
@@ -251,28 +265,20 @@ def display_risk_pivot(grid: pd.DataFrame, rows_group=[], col_group=[]):
         editable=False,
         groupable=True
     )
-    columns_defs = {
-        # rows
-        'underlying': {'field': 'underlying', 'rowGroup': True},
-        'asset': {'field': 'asset', 'rowGroup': True},
-        'protocol': {'field': 'protocol', 'rowGroup': True},
-        'chain': {'field': 'chain', 'rowGroup': True},
-        'hold_mode': {'field': 'hold_mode'},
-        'type': {'field': 'type'},
-        # cols
-        'address': {'field': 'address', 'pivot': True},
-        # values
-        'value': {'field': 'value', 'aggFunc': 'sum', 'type': ["numericColumn"],'cellRenderer': 'agGroupCellRenderer', 'cellRendererParams': {'innerRenderer': 'sumRenderer'}},
-        'amount': {'field': 'price', 'type': ["numericColumn"]},
-        'price': {'field': 'price', 'type': ["numericColumn"]},
-    }
+    columns_defs = ((({row: {'field': row, 'rowGroup': True} for row in rows}
+                    | {col: {'field': col, 'pivot': True} for col in columns})
+                    | {val: {'field': val, 'aggFunc': 'sum', 'type': ["numericColumn"], 'cellRenderer': 'agGroupCellRenderer',
+                'cellRendererParams': {'innerRenderer': 'sumRenderer'}} for val in values})
+                    | {hide: {'field': hide} for hide in hidden})
     for col in columns_defs.values():
         gb.configure_column(**col)
 
     go = gb.build()
-    grid['value'] = grid['value'].astype(int)
-    grid = grid.sort_values(by='value', ascending=False)
-    AgGrid(grid, gridOptions=go, height=1000)
+    grid = grid.fillna(0)
+    grid[values] = grid[values].astype(int)
+    grid = grid.sort_values(by=values[0], ascending=False)
+    AgGrid(grid, gridOptions=go, height=2000)
+
 
 class MyProgressBar:
     '''A progress bar with increment progress (why did i have to do that...)'''

@@ -23,8 +23,8 @@ if 'stage' not in st.session_state:
     st.session_state.pnl_explainer = PnlExplainer()
     st.session_state.stage = 0
 
-from utils.streamlit_utils import authentification_sidebar, load_parameters, prompt_initialization, \
-    prompt_plex_interval, display_risk_pivot
+from utils.streamlit_utils import authentification_sidebar, load_parameters, \
+    prompt_plex_interval, display_pivot
 
 pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
@@ -49,31 +49,11 @@ with snapshot_tab:
                                                   value=st.secrets['debank'] if 'debank' in st.secrets else '',
                                                   help="you think i am going to pay for you?")
 
-                    async def position_snapshot(address: str) -> pd.DataFrame:
-                        '''
-                        fetch from debank if not recently updated, or db if recently updated or refresh=False
-                        then write to json to disk
-                        returns parsed latest snapshot summed across all addresses
-                        only update once every 'update_frequency' minutes
-                        '''
-                        last_update = st.session_state.db.last_updated(address)
-                        updated_at = last_update[0]
-                        snapshot = st.session_state.api.parse_snapshot(last_update[1])
-
-                        # retrieve cache for addresses that have been updated recently, and always if refresh=False
-                        max_updated = datetime.now(tz=timezone.utc) - timedelta(
-                            minutes=st.session_state.parameters['plex']['update_frequency'])
-                        if refresh:
-                            if updated_at < max_updated and refresh:
-                                snapshot_dict = await st.session_state.api.fetch_position_snapshot(address, debank_key, write_to_json=True)
-                                snapshot = st.session_state.api.parse_snapshot(snapshot_dict)
-                            else:
-                                st.warning(f"We only update once every {st.session_state.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
-                        snapshot['address'] = address
-                        return snapshot
-
-                    snapshots = asyncio.run(safe_gather([position_snapshot(address) for address in addresses],
-                                           n=st.session_state.parameters['input_data']['async']['gather_limit']))
+                    snapshots = asyncio.run(safe_gather([st.session_state.api.position_snapshot(address,
+                                                                                                 debank_key,
+                                                                                                 refresh=refresh)
+                                                         for address in addresses],
+                                                        n=st.session_state.parameters['input_data']['async']['gather_limit']))
                     snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
                     st.dataframe(snapshot)
                     st.session_state.snapshot = snapshot
@@ -84,23 +64,40 @@ with snapshot_tab:
                     )
                 )
 
+    if 'snapshot' in st.session_state:
+        st.session_state.snapshot.to_csv('temp.csv')
+        with open('temp.csv', "rb") as file:
+            st.download_button(
+                label="Download risk data",
+                data=file,
+                file_name='temp.csv',
+                mime='text/csv',
+            )
+
 with risk_tab:
     # dynamic categorization
     with st.form("categorization_form"):
         if 'snapshot' in st.session_state:
+            if missing_category := set(st.session_state.snapshot['asset']) - set(st.session_state.pnl_explainer.categories.keys()):
+                st.warning(f"New underlyings {missing_category} -> Edit 'underlying' below to group exposures by underlying")
+
+            # display risk
             st.write("Risk pivot table: group exposures by underlying")
             st.session_state.snapshot['underlying'] = st.session_state.snapshot['asset'].map(
                 st.session_state.pnl_explainer.categories)
-            display_risk_pivot(st.session_state.snapshot)
+            display_pivot(st.session_state.snapshot,
+                          rows=['underlying', 'asset', 'chain', 'protocol'],
+                          columns=['address'],
+                          values=['value', 'price', 'amount'],
+                          hidden=['hold_mode', 'type'])
 
+            # categorization
             st.write("Edit 'underlying' below to group exposures by underlying")
-            categorization = pd.DataFrame({'underlying': {coin: coin
-                                           for coin in st.session_state.snapshot['asset'].unique()
-                                           if coin not in st.session_state.pnl_explainer.categories}
-                                          | st.session_state.pnl_explainer.categories})
+            categorization = pd.DataFrame({'underlying': {coin: coin for coin in missing_category}
+                                                         | st.session_state.pnl_explainer.categories})
             categorization['exposure'] = st.session_state.snapshot.groupby('asset').sum()['value']
             edited_categorization = st.data_editor(categorization, use_container_width=True)['underlying'].to_dict()
-            if st.form_submit_button(f"Override categorization"):
+            if st.form_submit_button("Override categorization"):
                 st.session_state.pnl_explainer.categories = edited_categorization
                 with open(st.session_state.pnl_explainer.categories_path, 'w') as f:
                     yaml.dump(edited_categorization, f)
@@ -109,14 +106,39 @@ with risk_tab:
 
 with plex_tab:
     start_datetime, end_datetime = prompt_plex_interval()
-    if 'snapshot' in st.session_state:
-        results = {}
-        for address in addresses:
-            data = st.session_state.db.query_explain_data(address, start_datetime, end_datetime)
-            start_snapshot = st.session_state.api.parse_snapshot(data['start_snapshot'])
-            end_snapshot = st.session_state.api.parse_snapshot(data['end_snapshot'])
-            results[address] = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
-            st.dataframe(results[address][0])
-            st.dataframe(results[address][1])
-            st.dataframe(results[address][2])
+
+    # fetch data from db
+    start_snapshots = {'snapshot': {}, 'timestamp': {}}
+    end_snapshots = {'snapshot': {}, 'timestamp': {}}
+    for address in addresses:
+        data = st.session_state.db.query_explain_data(address, start_datetime, end_datetime)
+        start_snapshots['snapshot'][address] = st.session_state.api.parse_snapshot(data['start_snapshot'])
+        start_snapshots['timestamp'][address] = datetime.fromtimestamp(data['start_snapshot']['timestamp'], tz=timezone.utc)
+        end_snapshots['snapshot'][address] = st.session_state.api.parse_snapshot(data['end_snapshot'])
+        end_snapshots['timestamp'][address] = datetime.fromtimestamp(data['end_snapshot']['timestamp'], tz=timezone.utc)
+    start_snapshot = pd.concat(start_snapshots['snapshot'].values(), axis=0, ignore_index=True)
+    end_snapshot = pd.concat(end_snapshots['snapshot'].values(), axis=0, ignore_index=True)
+    st.write("Actual dates of snapshots:")
+    st.dataframe(pd.concat([pd.Series(x['timestamp']) for x in [start_snapshots, end_snapshots]], axis=1, ignore_index=True))
+
+    # perform pnl explain
+    st.latex(r'PnL_{\text{delta}} = \sum \Delta P_{\text{underlying}} \times N^{\text{start}}')
+    st.latex(r'PnL_{\text{basis}} = \sum \Delta (P_{\text{asset}}-P_{\text{underlying}}) \times N^{\text{start}}')
+    st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
+    st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
+    display_pivot(st.session_state.plex,
+                  rows=['underlying', 'asset'],
+                  columns=['pnl_bucket'],
+                  values=['pnl'],
+                  hidden=['protocol', 'chain', 'hold_mode', 'type'])
+
+    if 'plex' in st.session_state:
+        st.session_state.plex.to_csv('temp.csv')
+        with open('temp.csv', "rb") as file:
+            st.download_button(
+                label="Download plex data",
+                data=file,
+                file_name='temp.csv',
+                mime='text/csv',
+            )
 
