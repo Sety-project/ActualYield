@@ -1,7 +1,8 @@
+import copy
 import json
 import os.path
 import typing
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any, Tuple
 
@@ -10,7 +11,7 @@ import asyncio
 
 import pandas as pd
 import yaml
-from pandas import DataFrame
+import streamlit as st
 
 from utils.db import CsvDB
 
@@ -20,7 +21,7 @@ class DebankAPI:
     api_url = "https://pro-openapi.debank.com/v1"
     def __init__(self, db: CsvDB):
         with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), "r") as ymlfile:
-            self.config = yaml.safe_load(ymlfile)
+            self.parameters = yaml.safe_load(ymlfile)
 
         self.db = db
 
@@ -45,20 +46,46 @@ class DebankAPI:
             json_results = await asyncio.gather(*[call_position_endpoint(f'user/{endpoint}')
                                        for endpoint in self.endpoints])
 
-        dict_result = {'timestamp': now_time} | dict(zip(self.endpoints, json_results))
+        dict_result = {'timestamp': now_time} | {'address': address} | dict(zip(self.endpoints, json_results))
         if write_to_json:
             self.db.insert_snapshot(dict_result, address)
 
         return dict_result
 
+    async def position_snapshot(self, address: str, debank_key: str, refresh: bool) -> pd.DataFrame:
+        '''
+        fetch from debank if not recently updated, or db if recently updated or refresh=False
+        then write to json to disk
+        returns parsed latest snapshot summed across all addresses
+        only update once every 'update_frequency' minutes
+        '''
+        last_update = self.db.last_updated(address)
+        updated_at = last_update[0]
+        snapshot = self.parse_snapshot(last_update[1])
+
+        # retrieve cache for addresses that have been updated recently, and always if refresh=False
+        max_updated = datetime.now(tz=timezone.utc) - timedelta(
+            minutes=self.parameters['plex']['update_frequency'])
+        if refresh:
+            if updated_at < max_updated:
+                snapshot_dict = await self.fetch_position_snapshot(address, debank_key,
+                                                                                   write_to_json=True)
+                snapshot = self.parse_snapshot(snapshot_dict)
+            else:
+                st.warning(
+                    f"We only update once every {self.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
+        return snapshot
+
     def query_explain_data(self, address: str, start_date: datetime, end_date: datetime = datetime.now()) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         start_snapshot, end_snapshot, transactions = self.db.query_explain_data(address, start_date, end_date)
         return self.parse_snapshot(start_snapshot), self.parse_snapshot(end_snapshot), pd.DataFrame(transactions)
 
-    def parse_snapshot(self, dict_result: dict) -> pd.DataFrame:
-        if not dict_result:
+    def parse_snapshot(self, dict_input: dict) -> pd.DataFrame:
+        if not dict_input:
             return pd.DataFrame()
+        dict_result = copy.deepcopy(dict_input)
         timestamp = int(dict_result.pop('timestamp'))
+        address = dict_result.pop('address')
         res_list = sum(
             (
                 getattr(self, f'parse_{endpoint}')(res)
@@ -68,7 +95,8 @@ class DebankAPI:
         )
         df_result = pd.DataFrame(res_list)
         df_result['timestamp'] = timestamp
-        df_result = df_result[~df_result['protocol'].isin(self.config['plex']['redundant_protocols'])]
+        df_result['address'] = address
+        df_result = df_result[~df_result['protocol'].isin(self.parameters['plex']['redundant_protocols'])]
         return df_result
 
     # TODO:
