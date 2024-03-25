@@ -1,3 +1,4 @@
+import locale
 import os
 import threading
 from copy import deepcopy
@@ -14,6 +15,8 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 
 from scrappers.defillama_history.coingecko import myCoinGeckoAPI
 from utils.telegram_bot import check_whitelist
+
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 coingecko = myCoinGeckoAPI()
 with st.spinner('fetching meta data'):
@@ -265,10 +268,12 @@ def display_pivot(grid: pd.DataFrame, rows: list[str], columns: list[str], value
         editable=False,
         groupable=True
     )
-    columns_defs = ((({row: {'field': row, 'rowGroup': True} for row in rows}
-                    | {col: {'field': col, 'pivot': True} for col in columns})
-                    | {val: {'field': val, 'aggFunc': 'sum', 'type': ["numericColumn"], 'cellRenderer': 'agGroupCellRenderer',
-                'cellRendererParams': {'innerRenderer': 'sumRenderer'}} for val in values})
+    columns_defs = ({row: {'field': row, 'rowGroup': True} for row in rows}
+                    | {col: {'field': col, 'pivot': True} for col in columns}
+                    | {val: {'field': val, 'aggFunc': 'sum', 'type': ["numericColumn"],
+                             'cellRenderer': 'agGroupCellRenderer',
+                            # 'valueFormatter': lambda number: locale.currency(number, grouping=True),
+                             'cellRendererParams': {'innerRenderer': 'sumRenderer'}} for val in values}
                     | {hide: {'field': hide} for hide in hidden})
     for col in columns_defs.values():
         gb.configure_column(**col)
@@ -277,7 +282,7 @@ def display_pivot(grid: pd.DataFrame, rows: list[str], columns: list[str], value
     grid = grid.fillna(0)
     grid[values] = grid[values].astype(int)
     grid = grid.sort_values(by=values[0], ascending=False)
-    AgGrid(grid, gridOptions=go, height=2000)
+    AgGrid(grid, gridOptions=go)
 
 
 class MyProgressBar:

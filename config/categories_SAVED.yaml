@@ -1,36 +1,40 @@
-'0': '0'
-'1': '1'
-'170873462630': '170873462630'
-'2': '2'
-'3': '3'
-'428458408537': '428458408537'
+'#0': '#0'
 ARB: ARB
 AURA: AURA
 AVAX: AVAX
 BAL: BAL
 BNB: BNB
-BTC.b: BTC
-BUSD: USD
+BTC.b: WBTC
+BUSD: USDC
+Blockchain Bliss Sonnet: Blockchain Bliss Sonnet
 CRV: CRV
 CVX: CVX
-DAI: USD
-DOLA: USD
+DAI: USDC
+DOLA: USDC
 DUCKIES: DUCKIES
 DYDX: DYDX
 ETH: ETH
+EURA: EURA
+EtherMail.io - Web3 wallet email + ENS / UD token: EtherMail.io - Web3 wallet email
+  + ENS / UD token
+Exchange Pass: Exchange Pass
 GGP: GGP
 HOP: HOP
 KNC: KNC
 LDO: LDO
-LUSD: USD
+LUSD: USDC
 LYRA: LYRA
-MAI: USD
+Limited edition Pirate Girl NFTs at pirategirls.xyz - mint now: Limited edition Pirate
+  Girl NFTs at pirategirls.xyz - mint now
+MAI: USDC
 MATIC: MATIC
-MIM: USD
+MIM: USDC
 MaticX: MATIC
+Member Node: Member Node
+PENDLE: PENDLE
 PLS: PLS
-PT-GLP-28MAR2024: GLP
-PT-aUSDC-27JUN2024: USD
+PT-GLP-28MAR2024: PT-GLP-28MAR2024
+PT-aUSDC-27JUN2024: USDC
 QI: QI
 RDNT: RDNT
 RDNT-WETH: ETH
@@ -39,31 +43,33 @@ SDAO: SDAO
 SDT: SDT
 SONNE: SONNE
 SOPH: SOPH
-USDC: USD
-USDC.e: USD
-USDT: USD
-USDT.e: USD
-USDt: USD
+THC World Pass: THC World Pass
+USDC: USDC
+USDC.e: USDC
+USDT: USDC
+USDT.e: USDC
+USDt: USDC
 VELO: VELO
 VISR: VISR
 WAVAX: AVAX
-WBTC: BTC
-WBTC.e: BTC
+WBTC: WBTC
+WBTC.e: WBTC
 WETH: ETH
 WETH.e: ETH
 WMATIC: MATIC
 aPolWETH: ETH
 aPolWMATIC: MATIC
-agEUR: EUR
-crvUSD: USD
+agEUR: EURA
+crvUSD: USDC
 esEXA: esEXA
-esGMX: GMX
-jEUR: EUR
+esGMX: esGMX
+jEUR: EURA
 miMATIC: MATIC
 sAVAX: AVAX
-sUSD: USD
+sUSD: USDC
 stETH: ETH
 stMATIC: MATIC
 swETH: ETH
+thehighapesclub.com: thehighapesclub.com
 wstETH: ETH
-xDai: USD
+xDai: USDC

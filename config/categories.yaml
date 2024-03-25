@@ -14,6 +14,7 @@ DOLA: USDC
 DUCKIES: DUCKIES
 DYDX: DYDX
 ETH: ETH
+EURA: EURA
 EtherMail.io - Web3 wallet email + ENS / UD token: EtherMail.io - Web3 wallet email
   + ENS / UD token
 Exchange Pass: Exchange Pass
@@ -58,11 +59,11 @@ WETH.e: ETH
 WMATIC: MATIC
 aPolWETH: ETH
 aPolWMATIC: MATIC
-agEUR: agEUR
+agEUR: EURA
 crvUSD: USDC
 esEXA: esEXA
 esGMX: esGMX
-jEUR: agEUR
+jEUR: EURA
 miMATIC: MATIC
 sAVAX: AVAX
 sUSD: USDC

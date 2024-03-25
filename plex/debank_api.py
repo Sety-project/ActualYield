@@ -13,17 +13,17 @@ import pandas as pd
 import yaml
 import streamlit as st
 
-from utils.db import CsvDB
+from utils.db import RawDataDB, SQLiteDB
 
 
 class DebankAPI:
     endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
     api_url = "https://pro-openapi.debank.com/v1"
-    def __init__(self, db: CsvDB):
+    def __init__(self, json_db: RawDataDB, plex_db: SQLiteDB):
         with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), "r") as ymlfile:
             self.parameters = yaml.safe_load(ymlfile)
-
-        self.db = db
+        self.json_db: RawDataDB = json_db
+        self.plex_db: SQLiteDB = plex_db
 
     async def fetch_position_snapshot(self, address: str, debank_key: str, write_to_json=True) -> dict:
         '''
@@ -48,7 +48,7 @@ class DebankAPI:
 
         dict_result = {'timestamp': now_time} | {'address': address} | dict(zip(self.endpoints, json_results))
         if write_to_json:
-            self.db.insert_snapshot(dict_result, address)
+            self.json_db.insert_snapshot(dict_result, address)
 
         return dict_result
 
@@ -59,9 +59,7 @@ class DebankAPI:
         returns parsed latest snapshot summed across all addresses
         only update once every 'update_frequency' minutes
         '''
-        last_update = self.db.last_updated(address)
-        updated_at = last_update[0]
-        snapshot = self.parse_snapshot(last_update[1])
+        updated_at, snapshot = self.plex_db.last_updated(address)
 
         # retrieve cache for addresses that have been updated recently, and always if refresh=False
         max_updated = datetime.now(tz=timezone.utc) - timedelta(
@@ -71,14 +69,11 @@ class DebankAPI:
                 snapshot_dict = await self.fetch_position_snapshot(address, debank_key,
                                                                                    write_to_json=True)
                 snapshot = self.parse_snapshot(snapshot_dict)
+                self.plex_db.insert_snapshot(snapshot)
             else:
                 st.warning(
                     f"We only update once every {self.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
         return snapshot
-
-    def query_explain_data(self, address: str, start_date: datetime, end_date: datetime = datetime.now()) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        start_snapshot, end_snapshot, transactions = self.db.query_explain_data(address, start_date, end_date)
-        return self.parse_snapshot(start_snapshot), self.parse_snapshot(end_snapshot), pd.DataFrame(transactions)
 
     def parse_snapshot(self, dict_input: dict) -> pd.DataFrame:
         if not dict_input:
