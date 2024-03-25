@@ -1,9 +1,9 @@
 #!/bin/bash
 
-cd ~/ActualYield
+cd ~/actualyield
 
 # Activate the virtual environment
-source ./.venv/bin/activate
+source ./venv/bin/activate
 
 # Run the Python script
 python3 ./cli.py snapshot ./.streamlit/secrets.toml >> ./cli.log
