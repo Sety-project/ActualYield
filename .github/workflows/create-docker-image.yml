@@ -3,7 +3,7 @@ name: Deploy pyenv to ECR
 on:
  
   push:
-    branches: [ master ]
+    branches: [ main ]
     paths:
       - 'actualyield/**'
 
