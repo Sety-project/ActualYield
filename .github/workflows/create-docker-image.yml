@@ -1,4 +1,4 @@
-name: Deploy pyenv to ECR
+name: Deploy actualyield to ECR
 
 on:
 
@@ -34,7 +34,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: actualyield
         IMAGE_TAG: latest
-        DOCKERFILE: pyenv/Dockerfile
+        DOCKERFILE: actualyield/Dockerfile
       run: |
         docker build . -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f $DOCKERFILE
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
