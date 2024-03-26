@@ -28,13 +28,13 @@ WORKDIR $ACTUALYIELD_PATH
 
 # Copy pip requirements before copying full project
 USER $USER
-COPY --chown=$USER:$USER /actualyield/requirements.txt $ACTUALYIELD_PATH
+COPY --chown=$USER:$USER /requirements.txt $ACTUALYIELD_PATH
 
 # Install Pip dependencies --> Need to install as root
 RUN pip3 install -Ur $ACTUALYIELD_PATH/requirements.txt
 
 # Now copy full project
-COPY --chown=$USER:$USER /actualyield $ACTUALYIELD_PATH
+COPY --chown=$USER:$USER / $ACTUALYIELD_PATH
 
 RUN chmod +x $ACTUALYIELD_PATH/run.sh
 
