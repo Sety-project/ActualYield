@@ -9,6 +9,7 @@ import matplotlib
 import pandas as pd
 import streamlit as st
 import yaml
+import plotly.express as px
 
 from plex.plex import PnlExplainer
 from utils.async_utils import safe_gather
@@ -17,22 +18,27 @@ from plex.debank_api import DebankAPI
 
 assert (sys.version_info >= (3, 10)), "Please use Python 3.10 or higher"
 
-if 'db' not in st.session_state:
+if 'set_config' not in st.session_state:  # hack to have it run only once, and before any st is called (crash otherwise..)
     st.set_page_config(layout="wide")
-    st.session_state.plex_db = SQLiteDB()
-    st.session_state.api = DebankAPI(RawDataDB(), st.session_state.plex_db)
-    st.session_state.pnl_explainer = PnlExplainer()
+    st.session_state.set_config =True
 
 from utils.streamlit_utils import authentification_sidebar, load_parameters, \
-    prompt_plex_interval, display_pivot
+prompt_plex_interval, display_pivot
 
-pd.options.mode.chained_assignment = None
-st.session_state.parameters = load_parameters()
-# authentification_sidebar()
-st.session_state['authentification'] = 'verified'
+if 'pnl_explainer' not in st.session_state:  # hack to have it run only once
+    pd.options.mode.chained_assignment = None
+    st.session_state.parameters = load_parameters()
+    # authentification_sidebar()
+    st.session_state['authentification'] = 'verified'
 
-risk_tab, plex_details_tab, plex_history_tab = st.tabs(
-    ["risk", "pnl_details", "pnl_history"])
+# TODO: no pb reloading each time ? bc of sql
+st.session_state.plex_db = SQLiteDB(st.session_state.parameters['input_data']['plex_db'])
+raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(st.session_state.parameters['input_data']['raw_data_db'])
+st.session_state.api = DebankAPI(raw_data_db, st.session_state.plex_db)
+st.session_state.pnl_explainer = PnlExplainer()
+
+risk_tab, pnl_tab = st.tabs(
+    ["risk", "pnl"])
 
 if 'my_addresses' not in st.secrets:
     addresses = st.sidebar.text_area("addresses", help='Enter multiple strings on separate lines').split('\n')
@@ -53,7 +59,7 @@ with st.sidebar.form("snapshot_form"):
                                                                                      debank_key,
                                                                                      refresh=refresh)
                                              for address in addresses],
-                                            n=st.session_state.parameters['input_data']['async']['gather_limit']))
+                                            n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
         snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
         st.session_state.snapshot = snapshot
     else:
@@ -103,40 +109,81 @@ with risk_tab:
                     yaml.dump(edited_categorization, f)
                 st.success("Categories updated (not exposure!)")
 
-with plex_details_tab:
+with pnl_tab:
     start_datetime, end_datetime = prompt_plex_interval()
 
-    # fetch data from db
-    start_list = {}
-    end_list = {}
-    for address in addresses:
-        data = st.session_state.plex_db.query_explain_data(address, start_datetime, end_datetime)
-        start_list[address] = data['start_snapshot']
-        end_list[address] = data['end_snapshot']
-    start_snapshot = pd.concat(start_list.values(), axis=0, ignore_index=True)
-    end_snapshot = pd.concat(end_list.values(), axis=0, ignore_index=True)
-    st.write("Actual dates of snapshots:")
-    st.dataframe(pd.concat([pd.Series({address: datetime.fromtimestamp(df['timestamp'].iloc[0], tz=timezone.utc) for address, df in x.items()})
-                                      for x in [start_list, end_list]], axis=1, ignore_index=True))
+    details_tab, history_tab = st.tabs(["details", "history"])
 
-    # perform pnl explain
-    st.latex(r'PnL_{\text{delta}} = \sum \Delta P_{\text{underlying}} \times N^{\text{start}}')
-    st.latex(r'PnL_{\text{basis}} = \sum \Delta (P_{\text{asset}}-P_{\text{underlying}}) \times N^{\text{start}}')
-    st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
-    st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
-    display_pivot(st.session_state.plex,
-                  rows=['underlying', 'asset'],
-                  columns=['pnl_bucket'],
-                  values=['pnl'],
-                  hidden=['protocol', 'chain', 'hold_mode', 'type'])
+    with details_tab:
+        # fetch data from db
+        start_list = {}
+        end_list = {}
+        for address in addresses:
+            data = st.session_state.plex_db.query_start_end_snapshots(address, start_datetime, end_datetime)
+            start_list[address] = data['start_snapshot']
+            end_list[address] = data['end_snapshot']
+        start_snapshot = pd.concat(start_list.values(), axis=0, ignore_index=True)
+        end_snapshot = pd.concat(end_list.values(), axis=0, ignore_index=True)
+        st.write("Actual dates of snapshots:")
+        st.dataframe(pd.concat([pd.Series({address: datetime.fromtimestamp(df['timestamp'].iloc[0], tz=timezone.utc) for address, df in x.items()})
+                                          for x in [start_list, end_list]], axis=1, ignore_index=True))
 
-    if 'plex' in st.session_state:
-        st.session_state.plex.to_csv('temp.csv')
-        with open('temp.csv', "rb") as file:
-            st.download_button(
-                label="Download plex data",
-                data=file,
-                file_name='temp.csv',
-                mime='text/csv',
-            )
+        # perform pnl explain
+        st.latex(r'PnL_{\text{delta}} = \sum \Delta P_{\text{underlying}} \times N^{\text{start}}')
+        st.latex(r'PnL_{\text{basis}} = \sum \Delta (P_{\text{asset}}-P_{\text{underlying}}) \times N^{\text{start}}')
+        st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
+        st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
+        display_pivot(st.session_state.plex,
+                      rows=['underlying', 'asset'],
+                      columns=['pnl_bucket'],
+                      values=['pnl'],
+                      hidden=['protocol', 'chain', 'hold_mode', 'type'])
+
+        if 'plex' in st.session_state:
+            st.session_state.plex.to_csv('temp.csv')
+            with open('temp.csv', "rb") as file:
+                st.download_button(
+                    label="Download plex data",
+                    data=file,
+                    file_name='temp.csv',
+                    mime='text/csv',
+                )
+
+    with history_tab:
+        # snapshots
+        snapshots_within = pd.concat([st.session_state.plex_db.query_snapshots_within(address, start_datetime, end_datetime)
+                                      for address in addresses], axis=0, ignore_index=True)
+        # explains btw snapshots
+        explains = []
+        for start, end in zip(
+                snapshots_within['timestamp'].unique()[:-1],
+                snapshots_within['timestamp'].unique()[1:],
+        ):
+            start_snapshots = snapshots_within[snapshots_within['timestamp'] == start]
+            end_snapshots = snapshots_within[snapshots_within['timestamp'] == end]
+            explains.append(st.session_state.pnl_explainer.explain(start_snapshots, end_snapshots))
+        explains = pd.concat(explains, axis=0, ignore_index=True)
+
+        # plot timeseries of pnl by some staked_columns
+        categoricals = ['underlying', 'asset', 'protocol', 'pnl_bucket', 'chain', 'hold_mode', 'type']
+        values = ['pnl']
+        rows = ['timestamp_end']
+        granularity_field = st.selectbox("granularity field", categoricals, index=0)
+        relevant_columns = categoricals + values + rows
+        totals = pd.pivot_table(explains, values=values, columns=[granularity_field], index=rows, aggfunc='sum').cumsum()
+        totals = totals.stack().reset_index()
+
+        st.plotly_chart(
+            px.bar(totals, x='timestamp_end', y='pnl', color=granularity_field, title='cum_pnl',
+                   barmode='stack'), use_container_width=True)
+
+        if 'history' in st.session_state:
+            st.session_state.history.to_csv('temp.csv')
+            with open('temp.csv', "rb") as file:
+                st.download_button(
+                    label="Download history data",
+                    data=file,
+                    file_name='temp.csv',
+                    mime='text/csv',
+                )
 

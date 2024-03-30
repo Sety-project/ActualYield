@@ -238,7 +238,7 @@ class FilteredDefiLlama(DefiLlama):
         coros = [self.apy_history(meta,
                                   fetch_summary=fetch_summary,
                                   progress_bar=progress_bar) for meta in metadata]
-        data = asyncio.run(safe_gather(coros, n=st.session_state.parameters['input_data']['async']['gather_limit']))
+        data = asyncio.run(safe_gather(coros, n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
         # remove failed pools and update updated_time
         self.pools = self.pools[self.pools['name'].apply(lambda pool: fetch_summary[pool][0] != 'error')]
         self.pools['updated'] = self.pools['name'].apply(lambda pool: fetch_summary[pool][1])

@@ -1,5 +1,15 @@
 input_data:
-  database: aiven
+#  raw_data_db:
+#    type: LocalJsonRawDataDB
+#    data_dir: actualyield/remote_data # path from home
+  raw_data_db:
+    type: S3JsonRawDataDB
+    bucket_name: actualyield
+    data_dir: raw_data # path from home
+  plex_db:
+    type: sql
+    data_dir: mysql # path from home
+run_parameters:
   async:
     gather_limit: 10
     pool_size: 10
