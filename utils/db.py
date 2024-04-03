@@ -144,10 +144,10 @@ class SQLiteDB(PlexDB):
                    'timestamp': 'INTEGER'}
     def __init__(self, config: dict, secrets: dict):
         if 'bucket_name' in config and 'remote_file' in config:
-            # if bucket_name is in config, we are using s3 and download the file to /tmp
+            # if bucket_name is in config, we are using s3 and download the file to ~
             self.data_location = {'bucket_name': config['bucket_name'],
                                   'remote_file': config['remote_file'],
-                                  'local_file': os.path.join(os.sep, 'tmp', 'plex.db')}
+                                  'local_file': os.path.join(os.sep, os.getcwd(), 'plex.db')}
             self.secrets = secrets
 
             s3 = boto3.client('s3',
