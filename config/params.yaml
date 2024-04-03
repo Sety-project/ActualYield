@@ -1,12 +1,23 @@
 input_data:
-  database: aiven
+#  raw_data_db:
+#    type: LocalJsonRawDataDB
+#    data_dir: actualyield/remote_data # path from home
+  raw_data_db:
+    type: S3JsonRawDataDB
+    bucket_name: actualyield
+    data_dir: raw_data # path from home
+  plex_db:
+    type: sqlite
+    bucket_name: actualyield # if not present, look locally, else S3 bucketname.
+    remote_file: plex.db # path from home
+run_parameters:
   async:
     gather_limit: 10
     pool_size: 10
     max_overflow: 20
     pool_recycle: 3600
 plex:
-  update_frequency: 60 # in minutes
+  update_frequency: 1 # in minutes
   redundant_protocols:
     - LIDO
     - Swell
