@@ -29,7 +29,7 @@ st.session_state.debank_key = st.sidebar.text_input("debank key",
                                    value=st.secrets['debank'] if 'debank' in st.secrets else '',
                                    help="you think i am going to pay for you?")
 # tamper with the db file name to add hash of debank key
-hashed_debank_key = sha256(st.session_state.debank_key.encode()).hexdigest()[:8]
+hashed_debank_key = st.session_state.debank_key
 plex_db_params = copy.deepcopy(st.session_state.parameters['input_data']['plex_db'])
 plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db', f'_{hashed_debank_key}.db')
 
