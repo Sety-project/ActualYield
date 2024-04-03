@@ -25,29 +25,12 @@ from utils.streamlit_utils import load_parameters, prompt_plex_interval, display
 pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
 
-st.session_state.debank_key = st.sidebar.text_input("debank key",
-                                                    value=st.session_state.parameters['profile'][
-                                                        'debank_key'] if 'debank_key' in st.session_state.parameters[
-                                                        'profile'] else '',
-                                                    help="you think i am going to pay for you?")
-addresses = st.sidebar.text_area("addresses",
-                                 value=st.session_state.parameters['profile']['addresses'] if 'addresses' in
-                                                                                              st.session_state.parameters[
-                                                                                                  'profile'] else '',
-                                 help='Enter multiple strings, like a list')
-addresses = [address for address in eval(addresses) if address[:2] == "0x"]
-
-if (st.session_state['debank_key'] == '') or (not addresses):
-    st.warning("Please enter your debank key and addresses")
-    st.stop()
-
-# tamper with the db file name to add hash of debank key
-hashed_debank_key = st.session_state.debank_key
-plex_db_params = copy.deepcopy(st.session_state.parameters['input_data']['plex_db'])
-plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db', f'_{hashed_debank_key}.db')
-
 # TODO: no pb reloading each time ? bc of sql
 if 'plex_db' not in st.session_state:
+    # tamper with the db file name to add debank key
+    plex_db_params = copy.deepcopy(st.session_state.parameters['input_data']['plex_db'])
+    plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db',
+                                                                          f"_{st.session_state.parameters['profile']['debank_key']}.db")
     st.session_state.plex_db: PlexDB = SQLiteDB(plex_db_params, st.secrets)
     raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(st.session_state.parameters['input_data']['raw_data_db'], st.secrets)
     st.session_state.api = DebankAPI(raw_data_db, st.session_state.plex_db)
@@ -59,8 +42,8 @@ risk_tab, pnl_tab = st.tabs(
 with st.sidebar.form("snapshot_form"):
     refresh = st.form_submit_button("fetch from debank", help="fetch from debank costs credits !")
 
-    snapshots = asyncio.run(safe_gather([st.session_state.api.position_snapshot(address, debank_key=st.session_state.debank_key, refresh=refresh)
-                                         for address in addresses],
+    snapshots = asyncio.run(safe_gather([st.session_state.api.position_snapshot(address, debank_key=st.session_state.parameters['profile']['debank_key'], refresh=refresh)
+                                         for address in st.session_state.parameters['profile']['addresses']],
                                         n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
     if refresh:
         st.session_state.plex_db.upload_to_s3()
@@ -116,7 +99,7 @@ with pnl_tab:
         # fetch data from db
         start_list = {}
         end_list = {}
-        for address in addresses:
+        for address in st.session_state.parameters['profile']['addresses']:
             data = st.session_state.plex_db.query_start_end_snapshots(address, start_datetime, end_datetime)
             start_list[address] = data['start_snapshot']
             end_list[address] = data['end_snapshot']
@@ -150,7 +133,7 @@ with pnl_tab:
     with history_tab:
         # snapshots
         snapshots_within = pd.concat([st.session_state.plex_db.query_snapshots_within(address, start_datetime, end_datetime)
-                                      for address in addresses], axis=0, ignore_index=True)
+                                      for address in st.session_state.parameters['profile']['addresses']], axis=0, ignore_index=True)
         # explains btw snapshots
         explains = []
         for start, end in zip(

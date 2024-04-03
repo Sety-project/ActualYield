@@ -14,15 +14,35 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 
 
 def load_parameters() -> dict:
-    if parameter_file := st.sidebar.file_uploader("upload parameters", type=['yaml']):
-        result = yaml.safe_load(parameter_file)
-    elif 'parameters' not in st.session_state:
-        with open(os.path.join(os.sep, os.getcwd(), "config", 'params.yaml'), 'r') as fp:
-            result = yaml.safe_load(fp)
-    else:
-        result = st.session_state.parameters
+    with open(os.path.join(os.sep, os.getcwd(), "config", 'params.yaml'), 'r') as fp:
+        defaults = yaml.safe_load(fp)
 
-    return result
+    with open('temp.yaml', 'w') as file:
+        yaml.dump(defaults, file)
+    with open('temp.yaml', "rb") as file:
+        st.sidebar.download_button(
+            label="Download parameters template",
+            data=file,
+            file_name='temp.yaml',
+            mime='yaml',
+        )
+
+    if parameter_file := st.sidebar.file_uploader("upload parameters", type=['yaml']):
+        return yaml.safe_load(parameter_file)
+    elif 'parameters' not in st.session_state:
+        defaults['profile'] = {'debank_key': st.sidebar.text_input("debank key",
+                                                            help="you think i am going to pay for you?")}
+        addresses = st.sidebar.text_area("addresses",
+                                         help='Enter multiple strings, like a list')
+
+        if (defaults['profile']['debank_key'] == '') or (not addresses):
+            st.warning("Please enter your debank key and addresses")
+            st.stop()
+
+        defaults['profile']['addresses'] = [address for address in eval(addresses) if address[:2] == "0x"]
+        return defaults
+    else:
+        return st.session_state.parameters
 
 
 def prompt_plex_interval():
