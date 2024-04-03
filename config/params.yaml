@@ -10,6 +10,11 @@ input_data:
     type: sqlite
     bucket_name: actualyield # if not present, look locally, else S3 bucketname.
     remote_file: plex.db # path from home, ignoring key hash
+profile:
+  debank_key: ""
+  addresses:
+    - ""
+    - ""
 run_parameters:
   async:
     gather_limit: 10
