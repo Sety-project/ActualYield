@@ -26,8 +26,21 @@ pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
 
 st.session_state.debank_key = st.sidebar.text_input("debank key",
-                                   value=st.secrets['debank'] if 'debank' in st.secrets else '',
-                                   help="you think i am going to pay for you?")
+                                                    value=st.session_state.parameters['profile'][
+                                                        'debank_key'] if 'debank_key' in st.session_state.parameters[
+                                                        'profile'] else '',
+                                                    help="you think i am going to pay for you?")
+addresses = st.sidebar.text_area("addresses",
+                                 value=st.session_state.parameters['profile']['addresses'] if 'addresses' in
+                                                                                              st.session_state.parameters[
+                                                                                                  'profile'] else '',
+                                 help='Enter multiple strings, like a list')
+addresses = [address for address in eval(addresses) if address[:2] == "0x"]
+
+if (st.session_state['debank_key'] == '') or (not addresses):
+    st.warning("Please enter your debank key and addresses")
+    st.stop()
+
 # tamper with the db file name to add hash of debank key
 hashed_debank_key = st.session_state.debank_key
 plex_db_params = copy.deepcopy(st.session_state.parameters['input_data']['plex_db'])
@@ -42,12 +55,6 @@ if 'plex_db' not in st.session_state:
 
 risk_tab, pnl_tab = st.tabs(
     ["risk", "pnl"])
-
-if 'my_addresses' not in st.secrets:
-    addresses = st.sidebar.text_area("addresses", help='Enter multiple strings on separate lines').split('\n')
-else:
-    addresses = st.secrets['my_addresses']
-addresses = [address for address in addresses if address[:2] == "0x"]
 
 with st.sidebar.form("snapshot_form"):
     refresh = st.form_submit_button("fetch from debank", help="fetch from debank costs credits !")
