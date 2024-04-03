@@ -1,4 +1,3 @@
-import locale
 import os
 import threading
 from copy import deepcopy
@@ -12,8 +11,6 @@ import streamlit as st
 import yaml
 from plotly import express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
-
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 
 def load_parameters() -> dict:
