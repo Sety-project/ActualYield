@@ -163,8 +163,6 @@ class SQLiteDB(PlexDB):
                     logging.warning(f'Creating new {self.data_location["local_file"]}')
                 else:
                     raise e
-
-
             local_file = self.data_location['local_file']
         elif 'data_dir' in config:
             # if not, we are using local and the file is already in the data_dir
@@ -176,8 +174,8 @@ class SQLiteDB(PlexDB):
         else:
             raise ValueError('config must contain either bucket_name and filename, or data_dir')
         # self.engine = st.experimental_connection(config['data_dir'], type=config['type'], autocommit=True)
-        os.chmod(local_file, 0o777)
         self.conn = sqlite3.connect(local_file, check_same_thread=False)
+        os.chmod(local_file, 0o777)
         self.cursor = self.conn.cursor()
 
     def upload_to_s3(self):
