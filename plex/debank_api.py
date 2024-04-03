@@ -11,19 +11,19 @@ import asyncio
 
 import pandas as pd
 import yaml
-import streamlit as st
 
-from utils.db import RawDataDB, SQLiteDB
+import streamlit as st
+from utils.db import RawDataDB, PlexDB
 
 
 class DebankAPI:
     endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
     api_url = "https://pro-openapi.debank.com/v1"
-    def __init__(self, json_db: RawDataDB, plex_db: SQLiteDB):
+    def __init__(self, json_db: RawDataDB, plex_db: PlexDB):
         with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), "r") as ymlfile:
             self.parameters = yaml.safe_load(ymlfile)
         self.json_db: RawDataDB = json_db
-        self.plex_db: SQLiteDB = plex_db
+        self.plex_db: PlexDB = plex_db
 
     async def fetch_position_snapshot(self, address: str, debank_key: str, write_to_json=True) -> dict:
         '''

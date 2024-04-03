@@ -1,16 +1,15 @@
 import asyncio
 import json
+import logging
 import os
 import sys
 import typing
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
-import streamlit as st
-from st_files_connection import FilesConnection
-import mysql.connector
 
 import boto3
+from botocore.exceptions import ClientError
 import pandas as pd
 import sqlite3
 
@@ -22,8 +21,8 @@ class RawDataDB(ABC):
     Abstract class for RawDataDB, where we put raw data in cold storage.
     '''
     @staticmethod
-    def build_RawDataDB(config: dict):
-        return getattr(sys.modules[__name__], config['type'])(config)
+    def build_RawDataDB(config: dict, secrets: dict):
+        return getattr(sys.modules[__name__], config['type'])(config, secrets)
 
     @abstractmethod
     def query_snapshot(self, address: str, timestamp: int) -> dict:
@@ -56,12 +55,12 @@ class LocalJsonRawDataDB(RawDataDB):
 
 
 class S3JsonRawDataDB(RawDataDB):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, secrets: dict):
         self.bucket_name = config['bucket_name']
         self.data_dir = config['data_dir']
         self.connection = boto3.client('s3',
-                                                         aws_access_key_id=st.secrets['AWS_ACCESS_KEY_ID'],
-                                                         aws_secret_access_key=st.secrets['AWS_SECRET_ACCESS_KEY'])
+                                                         aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+                                                         aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY'])
 
     def query_snapshot(self, address: str, timestamp: int) -> dict:
         key = os.path.join(self.data_dir, f'snapshot_{address}_{timestamp}.json')
@@ -89,7 +88,7 @@ class PlexDB(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def insert_snapshot(self, df: pd.DataFrame, address: str) -> None:
+    def insert_snapshot(self, df: pd.DataFrame) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -119,8 +118,7 @@ class PlexDB(ABC):
 
         result = pd.concat([self.query_snapshot(address, ts)
                           for ts in timestamps
-                          if start_timestamp <= ts <= end_timestamp
-                          ], axis=0)
+                          if start_timestamp <= ts <= end_timestamp], axis=0)
         result['timestamp'] = pd.to_datetime(result['timestamp'], unit='s', utc=True)
 
         return result
@@ -144,14 +142,50 @@ class SQLiteDB(PlexDB):
                    'price': 'REAL',
                    'value': 'REAL',
                    'timestamp': 'INTEGER'}
-    def __init__(self, config: dict):
-        data_dir = os.path.join(os.sep, Path.home(), config['data_dir'])
-        if not os.path.isdir(data_dir):
-            os.mkdir(data_dir)
-            os.chmod(data_dir, 0o777)
+    def __init__(self, config: dict, secrets: dict):
+        if 'bucket_name' in config and 'remote_file' in config:
+            # if bucket_name is in config, we are using s3 and download the file to /tmp
+            self.data_location = {'bucket_name': config['bucket_name'],
+                                  'remote_file': config['remote_file'],
+                                  'local_file': os.path.join(os.sep, 'tmp', 'plex.db')}
+            self.secrets = secrets
+
+            s3 = boto3.client('s3',
+                              aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+                              aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY'])
+            # check if the file exists in s3
+            try:
+                s3.download_file(self.data_location['bucket_name'],
+                                 self.data_location['remote_file'],
+                                 self.data_location['local_file'])
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    logging.warning(f'Creating new {self.data_location["local_file"]}')
+                else:
+                    raise e
+
+
+            local_file = self.data_location['local_file']
+        elif 'data_dir' in config:
+            # if not, we are using local and the file is already in the data_dir
+            data_dir = os.path.join(os.sep, Path.home(), config['data_dir'])
+            if not os.path.isdir(data_dir):
+                os.mkdir(data_dir)
+                os.chmod(data_dir, 0o777)
+            local_file = os.path.join(data_dir, 'plex.db')
+        else:
+            raise ValueError('config must contain either bucket_name and filename, or data_dir')
         # self.engine = st.experimental_connection(config['data_dir'], type=config['type'], autocommit=True)
-        self.conn = sqlite3.connect(os.path.join(data_dir, 'plex.db'))
+        os.chmod(local_file, 0o777)
+        self.conn = sqlite3.connect(local_file, check_same_thread=False)
         self.cursor = self.conn.cursor()
+
+    def upload_to_s3(self):
+        s3 = boto3.client('s3',
+                          aws_access_key_id=self.secrets['AWS_ACCESS_KEY_ID'],
+                          aws_secret_access_key=self.secrets['AWS_SECRET_ACCESS_KEY'])
+        s3.upload_file(self.data_location['local_file'], self.data_location['bucket_name'],
+                       self.data_location['remote_file'])
 
     def insert_snapshot(self, df: pd.DataFrame) -> None:
         for address, data in df.groupby('address'):

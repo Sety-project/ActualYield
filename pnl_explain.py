@@ -1,11 +1,9 @@
 import asyncio
 import copy
-import html
-import os
 import sys
 from datetime import timedelta, date, datetime, timezone, time
+from hashlib import sha256
 
-import matplotlib
 import pandas as pd
 import streamlit as st
 import yaml
@@ -13,7 +11,7 @@ import plotly.express as px
 
 from plex.plex import PnlExplainer
 from utils.async_utils import safe_gather
-from utils.db import SQLiteDB, RawDataDB
+from utils.db import SQLiteDB, RawDataDB, PlexDB
 from plex.debank_api import DebankAPI
 
 assert (sys.version_info >= (3, 10)), "Please use Python 3.10 or higher"
@@ -22,20 +20,25 @@ if 'set_config' not in st.session_state:  # hack to have it run only once, and b
     st.set_page_config(layout="wide")
     st.session_state.set_config =True
 
-from utils.streamlit_utils import authentification_sidebar, load_parameters, \
-prompt_plex_interval, display_pivot
+from utils.streamlit_utils import load_parameters, prompt_plex_interval, display_pivot
 
-if 'pnl_explainer' not in st.session_state:  # hack to have it run only once
-    pd.options.mode.chained_assignment = None
-    st.session_state.parameters = load_parameters()
-    # authentification_sidebar()
-    st.session_state['authentification'] = 'verified'
+pd.options.mode.chained_assignment = None
+st.session_state.parameters = load_parameters()
+
+st.session_state.debank_key = st.sidebar.text_input("debank key",
+                                   value=st.secrets['debank'] if 'debank' in st.secrets else '',
+                                   help="you think i am going to pay for you?")
+# tamper with the db file name to add hash of debank key
+hashed_debank_key = sha256(st.session_state.debank_key.encode()).hexdigest()[:8]
+plex_db_params = copy.deepcopy(st.session_state.parameters['input_data']['plex_db'])
+plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db', f'_{hashed_debank_key}.db')
 
 # TODO: no pb reloading each time ? bc of sql
-st.session_state.plex_db = SQLiteDB(st.session_state.parameters['input_data']['plex_db'])
-raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(st.session_state.parameters['input_data']['raw_data_db'])
-st.session_state.api = DebankAPI(raw_data_db, st.session_state.plex_db)
-st.session_state.pnl_explainer = PnlExplainer()
+if 'plex_db' not in st.session_state:
+    st.session_state.plex_db: PlexDB = SQLiteDB(plex_db_params, st.secrets)
+    raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(st.session_state.parameters['input_data']['raw_data_db'], st.secrets)
+    st.session_state.api = DebankAPI(raw_data_db, st.session_state.plex_db)
+    st.session_state.pnl_explainer = PnlExplainer()
 
 risk_tab, pnl_tab = st.tabs(
     ["risk", "pnl"])
@@ -47,27 +50,15 @@ else:
 addresses = [address for address in addresses if address[:2] == "0x"]
 
 with st.sidebar.form("snapshot_form"):
-    if st.session_state.authentification == 'verified':
-        if refresh := st.form_submit_button("fetch from debank", help="fetch from debank costs credits !"):
-            debank_key = st.sidebar.text_input("debank key",
-                                          value=st.secrets['debank'] if 'debank' in st.secrets else '',
-                                          help="you think i am going to pay for you?")
-        else:
-            debank_key = None
+    refresh = st.form_submit_button("fetch from debank", help="fetch from debank costs credits !")
 
-        snapshots = asyncio.run(safe_gather([st.session_state.api.position_snapshot(address,
-                                                                                     debank_key,
-                                                                                     refresh=refresh)
-                                             for address in addresses],
-                                            n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
-        snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
-        st.session_state.snapshot = snapshot
-    else:
-        st.sidebar.warning(
-            html.unescape(
-                'chat https://t.me/Pronoia_Bot, then enter your tg handle in the sidebar to get access'
-            )
-        )
+    snapshots = asyncio.run(safe_gather([st.session_state.api.position_snapshot(address, debank_key=st.session_state.debank_key, refresh=refresh)
+                                         for address in addresses],
+                                        n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
+    if refresh:
+        st.session_state.plex_db.upload_to_s3()
+    snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
+    st.session_state.snapshot = snapshot
 
 with risk_tab:
     # dynamic categorization
@@ -173,9 +164,12 @@ with pnl_tab:
         totals = pd.pivot_table(explains, values=values, columns=[granularity_field], index=rows, aggfunc='sum').cumsum()
         totals = totals.stack().reset_index()
 
-        st.plotly_chart(
-            px.bar(totals, x='timestamp_end', y='pnl', color=granularity_field, title='cum_pnl',
-                   barmode='stack'), use_container_width=True)
+        fig = px.bar(totals, x='timestamp_end', y='pnl',
+                     color=granularity_field, title='cum_pnl',
+                     barmode='stack')
+        min_dt = 4*3600 # 4h
+        fig.update_traces(width=min_dt*1000)
+        st.plotly_chart(fig, use_container_width=True)
 
         if 'history' in st.session_state:
             st.session_state.history.to_csv('temp.csv')

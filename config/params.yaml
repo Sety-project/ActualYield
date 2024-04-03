@@ -7,8 +7,9 @@ input_data:
     bucket_name: actualyield
     data_dir: raw_data # path from home
   plex_db:
-    type: sql
-    data_dir: mysql # path from home
+    type: sqlite
+    bucket_name: actualyield # if not present, look locally, else S3 bucketname.
+    remote_file: plex.db # path from home
 run_parameters:
   async:
     gather_limit: 10
@@ -16,7 +17,7 @@ run_parameters:
     max_overflow: 20
     pool_recycle: 3600
 plex:
-  update_frequency: 60 # in minutes
+  update_frequency: 1 # in minutes
   redundant_protocols:
     - LIDO
     - Swell
