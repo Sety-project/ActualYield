@@ -131,7 +131,7 @@ class DebankAPI:
         updated_at, _ = self.plex_db.last_updated(address, "transactions")
 
         transactions_list = await self._fetch_transactions(address,
-                                                           start_timestamp=int((datetime.now()-timedelta(days=14)).timestamp()), ##int(updated_at.timestamp()),
+                                                           start_timestamp=int(updated_at.timestamp()),
                                                            end_timestamp=int(datetime.now().timestamp()),
                                                            write_to_json=True)
         transactions = self.parse_all_history_list(transactions_list)
