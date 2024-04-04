@@ -12,6 +12,8 @@ import yaml
 from plotly import express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
 
+from utils.db import PlexDB
+
 
 def load_parameters() -> dict:
     with open(os.path.join(os.sep, os.getcwd(), "config", 'params.yaml'), 'r') as fp:
@@ -45,7 +47,7 @@ def load_parameters() -> dict:
         return st.session_state.parameters
 
 
-def prompt_plex_interval():
+def prompt_plex_interval(plex_db: PlexDB, addresses: list[str]) -> tuple[int, int]:
     date_col, time_col = st.columns(2)
     now_datetime = datetime.now()
     with time_col:
@@ -57,7 +59,22 @@ def prompt_plex_interval():
     start_datetime = datetime.combine(start_date, start_time)
     end_datetime = datetime.combine(end_date, end_time)
 
-    return start_datetime, end_datetime
+    if start_datetime >= end_datetime:
+        st.error("start time must be before end time")
+        st.stop()
+
+    # intersection of timestamps lists for all addresses
+    list_timestamps = [plex_db.all_timestamps(address, "snapshots") for address in addresses]
+    timestamps = [x for x in set(list_timestamps[0]) if all(x in lst for lst in list_timestamps)]
+
+    start_timestamp = next((ts for ts in sorted(timestamps, reverse=True)
+                            if ts <= start_datetime.timestamp()), min(timestamps))
+    end_timestamp = next((ts for ts in sorted(timestamps, reverse=False)
+                          if ts >= end_datetime.timestamp()), max(timestamps))
+
+    st.write(f"Actual dates of snapshots: {pd.to_datetime(start_timestamp, utc=True)}, {pd.to_datetime(end_timestamp, utc=True)}")
+
+    return start_timestamp, end_timestamp
 
 
 def display_pivot(grid: pd.DataFrame, rows: list[str], columns: list[str], values: list[str], hidden: list[str]):

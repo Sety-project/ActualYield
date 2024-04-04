@@ -1,31 +1,26 @@
 import copy
-import json
-import os.path
 import typing
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from typing import Dict, Any, Tuple
-
-import aiohttp
-import asyncio
+from typing import Dict, Any
 
 import pandas as pd
-import yaml
-
+import requests
+import aiohttp
 import streamlit as st
+
+from utils.async_utils import safe_gather
 from utils.db import RawDataDB, PlexDB
 
 
 class DebankAPI:
     endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
     api_url = "https://pro-openapi.debank.com/v1"
-    def __init__(self, json_db: RawDataDB, plex_db: PlexDB):
-        with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), "r") as ymlfile:
-            self.parameters = yaml.safe_load(ymlfile)
+    def __init__(self, json_db: RawDataDB, plex_db: PlexDB, parameters: Dict[str, Any]):
+        self.parameters = parameters
         self.json_db: RawDataDB = json_db
         self.plex_db: PlexDB = plex_db
 
-    async def fetch_position_snapshot(self, address: str, debank_key: str, write_to_json=True) -> dict:
+    async def _fetch_snapshot(self, address: str, write_to_json=True) -> dict:
         '''
         Fetches the position snapshot for a given address from the Debank API
         Stores the result in a json file if write_to_json is True
@@ -36,40 +31,40 @@ class DebankAPI:
             async with session.get(url=f'{self.api_url}/{endpoint}',
                                    headers={
                                        "accept": "application/json",
-                                       "AccessKey": debank_key,
+                                       "AccessKey": self.parameters['profile']['debank_key'],
                                    },
                                    params={"id": address}) as response:
                 return await response.json()
 
         now_time = datetime.now(tz=timezone.utc).timestamp()
         async with aiohttp.ClientSession() as session:
-            json_results = await asyncio.gather(*[call_position_endpoint(f'user/{endpoint}')
-                                       for endpoint in self.endpoints])
+            json_results = await safe_gather([call_position_endpoint(f'user/{endpoint}')
+                                       for endpoint in self.endpoints],
+                                             n=self.parameters['run_parameters']['async']['gather_limit'])
 
-        dict_result = {'timestamp': now_time} | {'address': address} | dict(zip(self.endpoints, json_results))
+        dict_result = {'timestamp': now_time, 'address': address} | dict(zip(self.endpoints, json_results))
         if write_to_json:
-            self.json_db.insert_snapshot(dict_result, address)
+            self.json_db.insert_table(dict_result, address, "snapshots")
 
         return dict_result
 
-    async def position_snapshot(self, address: str, debank_key: str, refresh: bool) -> pd.DataFrame:
+    async def fetch_snapshot(self, address: str, refresh: bool) -> pd.DataFrame:
         '''
         fetch from debank if not recently updated, or db if recently updated or refresh=False
         then write to json to disk
         returns parsed latest snapshot summed across all addresses
         only update once every 'update_frequency' minutes
         '''
-        updated_at, snapshot = self.plex_db.last_updated(address)
+        updated_at, snapshot = self.plex_db.last_updated(address, "snapshots")
 
         # retrieve cache for addresses that have been updated recently, and always if refresh=False
         max_updated = datetime.now(tz=timezone.utc) - timedelta(
             minutes=self.parameters['plex']['update_frequency'])
         if refresh:
             if updated_at < max_updated:
-                snapshot_dict = await self.fetch_position_snapshot(address, debank_key,
-                                                                                   write_to_json=True)
+                snapshot_dict = await self._fetch_snapshot(address, write_to_json=True)
                 snapshot = self.parse_snapshot(snapshot_dict)
-                self.plex_db.insert_snapshot(snapshot)
+                self.plex_db.insert_table(snapshot, "snapshots")
             else:
                 st.warning(
                     f"We only update once every {self.parameters['plex']['update_frequency']} minutes. {address} not refreshed")
@@ -94,22 +89,56 @@ class DebankAPI:
         df_result = df_result[~df_result['protocol'].isin(self.parameters['plex']['redundant_protocols'])]
         return df_result
 
-    # TODO:
-    # async def fetch_transactions(self, address: str, start_time: int) -> list:
-    #     cur_time = start_time
-    #     data = []
-    #     async with aiohttp.ClientSession() as session:
-    #         while True:
-    #             async with session.get(f'{self.api_url}/user/all_history_list', headers=self.headers,
-    #                                    params={"id": address, "start_time": cur_time, "page_count": 20}) as response:
-    #                 try:
-    #                     temp = await response.json()
-    #                     data += temp
-    #                     cur_time = temp['time_at'] + 1
-    #                 except Exception as e:
-    #                     print(f'Error: {e}')
-    #                     break
-    #     return data
+    async def _fetch_transactions(self, address: str, start_timestamp: int, end_timestamp: int, write_to_json=False) -> list:
+        '''
+        returns {tx_hash: {timestamp instead of taime_atm, the rest}}
+        '''
+        cur_timestamp = end_timestamp
+        data = {'cate_dict': {}, 'cex_dict': {}, 'history_list': [], 'project_dict': {}, 'token_dict': {}}
+        while cur_timestamp >= start_timestamp:
+            try:
+                response = requests.get(f'{self.api_url}/user/all_history_list',
+                                   headers={
+                                       "accept": "application/json",
+                                       "AccessKey": self.parameters['profile']['debank_key'],
+                                   },
+                                   params={"id": address, "start_time": int(cur_timestamp), "page_count": 20})
+                temp = response.json()
+                cur_timestamp = min(cur_timestamp, min(x['time_at'] for x in temp['history_list']) -1)
+                for key, value in temp.items():
+                    if isinstance(value, dict):
+                        data[key] |= value
+                    elif isinstance(value, list):
+                        data[key] += value
+                    else:
+                        raise ValueError(f'Unexpected type {type(value)}')
+            except Exception as e:
+                print(f'Error: {e}')
+                break
+        data = {'start_timestamp': end_timestamp, 'end_timestamp': end_timestamp, 'tx_list': data}
+        if write_to_json:
+            self.json_db.insert_table(data, address, "transactions")
+
+        return data['tx_list']
+
+    async def fetch_transactions(self, address: str) -> pd.DataFrame:
+        '''
+        fetch from debank if not recently updated, or db if recently updated or refresh=False
+        then write to json to disk
+        returns parsed latest snapshot summed across all addresses
+        only update once every 'update_frequency' minutes
+        '''
+        updated_at, _ = self.plex_db.last_updated(address, "transactions")
+
+        transactions_list = await self._fetch_transactions(address,
+                                                           start_timestamp=int((datetime.now()-timedelta(days=14)).timestamp()), ##int(updated_at.timestamp()),
+                                                           end_timestamp=int(datetime.now().timestamp()),
+                                                           write_to_json=True)
+        transactions = self.parse_all_history_list(transactions_list)
+        transactions['address'] = address
+        transactions = transactions[~transactions['id'].duplicated()]
+        self.plex_db.insert_table(transactions, "transactions")
+        return transactions
 
     @staticmethod
     def parse_all_complex_protocol_list(snapshot: list) -> list:
@@ -174,26 +203,34 @@ class DebankAPI:
         ]
 
     @staticmethod
-    def parse_all_history_list(snapshot: dict) -> list:
+    def parse_all_history_list(transactions: list) -> pd.DataFrame:
         result = []
-        for tx in snapshot['history_list']:
+        for tx in transactions['history_list']:
             if not tx['is_scam']:
                 def append_leg(leg, side):
-                    return {'timestamp': 0,
-                            'chain': tx['chain'],
-                            'protocol': snapshot['project_dict'][tx['project_id']]['name'] if 'project_id' in tx else
-                            leg['to_addr' if side == -1 else 'from_addr'],
-                            'gas': tx['tx']['usd_gas_fee'] if 'usd_gas_fee' in tx['tx'] else 0.0,
-                            'type': tx['cate_id'],
-                            'asset': leg['token_id'],
-                            'amount': leg['amount'] * side,
-                            'price': snapshot['token_dict'][leg['token_id']]['price'],
-                            'value': leg['amount'] * snapshot['token_dict'][leg['token_id']]['price'] * side}
+                    result = {'id': tx['id'],
+                              'timestamp': tx['time_at'],
+                              'chain': tx['chain'],
+                              'protocol': transactions['project_dict'][tx['project_id']]['name'] if tx[
+                                  'project_id'] else
+                              leg['to_addr' if side == -1 else 'from_addr'],
+                              'gas': tx['tx']['usd_gas_fee'] if 'usd_gas_fee' in tx['tx'] else 0.0,
+                              'action': tx['tx']['name'],
+                              'asset': leg['token_id'],
+                              'amount': leg['amount'] * side}
+                    if leg['token_id'] in transactions['token_dict']:
+                        if transactions['token_dict'][leg['token_id']]['price']:
+                            result['price'] = transactions['token_dict'][leg['token_id']]['price']
+                            result['value'] = leg['amount'] * result['price'] * side
+                    return result
 
-                for cur_leg in tx['receives']:
-                    result.append(append_leg(cur_leg, 1))
-                for cur_leg in tx['sends']:
-                    result.append(append_leg(cur_leg, -1))
 
-        return result
+                if 'receives' in tx:
+                    for cur_leg in tx['receives']:
+                        result.append(append_leg(cur_leg, 1))
+                if 'sends' in tx:
+                    for cur_leg in tx['sends']:
+                        result.append(append_leg(cur_leg, -1))
+
+        return pd.DataFrame(result)
     

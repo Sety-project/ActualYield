@@ -25,9 +25,9 @@ if __name__ == '__main__':
 
         plex_db: PlexDB = SQLiteDB(plex_db_params, secrets)
         raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(parameters['input_data']['raw_data_db'], secrets)
-        api = DebankAPI(raw_data_db, plex_db)
+        api = DebankAPI(raw_data_db, plex_db, parameters)
 
-        snapshots = asyncio.run(safe_gather([api.position_snapshot(address=address, debank_key=secrets['debank'], refresh=True)
+        snapshots = asyncio.run(safe_gather([api.fetch_snapshot(address=address, debank_key=secrets['debank'], refresh=True)
                                              for address in secrets['my_addresses']],
                                             n=min(10, len(secrets['my_addresses']))))
         plex_db.upload_to_s3()

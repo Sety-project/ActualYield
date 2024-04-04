@@ -33,22 +33,26 @@ if 'plex_db' not in st.session_state:
                                                                           f"_{st.session_state.parameters['profile']['debank_key']}.db")
     st.session_state.plex_db: PlexDB = SQLiteDB(plex_db_params, st.secrets)
     raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(st.session_state.parameters['input_data']['raw_data_db'], st.secrets)
-    st.session_state.api = DebankAPI(raw_data_db, st.session_state.plex_db)
+    st.session_state.api = DebankAPI(json_db=raw_data_db,
+                                     plex_db=st.session_state.plex_db,
+                                     parameters=st.session_state.parameters)
     st.session_state.pnl_explainer = PnlExplainer()
 
+addresses = st.session_state.parameters['profile']['addresses']
 risk_tab, pnl_tab = st.tabs(
     ["risk", "pnl"])
 
 with st.sidebar.form("snapshot_form"):
     refresh = st.form_submit_button("fetch from debank", help="fetch from debank costs credits !")
-
-    snapshots = asyncio.run(safe_gather([st.session_state.api.position_snapshot(address, debank_key=st.session_state.parameters['profile']['debank_key'], refresh=refresh)
-                                         for address in st.session_state.parameters['profile']['addresses']],
+    all_fetch = asyncio.run(safe_gather([st.session_state.api.fetch_snapshot(address, refresh=refresh)
+                                         for address in addresses] +
+                                        [st.session_state.api.fetch_transactions(address)
+                                         for address in addresses if refresh],
                                         n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
+    snapshots = all_fetch[:len(addresses)]
     if refresh:
         st.session_state.plex_db.upload_to_s3()
-    snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
-    st.session_state.snapshot = snapshot
+    st.session_state.snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
 
 with risk_tab:
     # dynamic categorization
@@ -91,29 +95,22 @@ with risk_tab:
                 st.success("Categories updated (not exposure!)")
 
 with pnl_tab:
-    start_datetime, end_datetime = prompt_plex_interval()
+    start_timestamp, end_timestamp = prompt_plex_interval(st.session_state.plex_db, addresses)
 
     details_tab, history_tab = st.tabs(["details", "history"])
 
     with details_tab:
-        # fetch data from db
-        start_list = {}
-        end_list = {}
-        for address in st.session_state.parameters['profile']['addresses']:
-            data = st.session_state.plex_db.query_start_end_snapshots(address, start_datetime, end_datetime)
-            start_list[address] = data['start_snapshot']
-            end_list[address] = data['end_snapshot']
-        start_snapshot = pd.concat(start_list.values(), axis=0, ignore_index=True)
-        end_snapshot = pd.concat(end_list.values(), axis=0, ignore_index=True)
-        st.write("Actual dates of snapshots:")
-        st.dataframe(pd.concat([pd.Series({address: datetime.fromtimestamp(df['timestamp'].iloc[0], tz=timezone.utc) for address, df in x.items()})
-                                          for x in [start_list, end_list]], axis=1, ignore_index=True))
+        # snapshots
+        start_snapshot = st.session_state.plex_db.query_table_at(addresses, start_timestamp, "snapshots")
+        end_snapshot = st.session_state.plex_db.query_table_at(addresses, end_timestamp, "snapshots")
+        # transactions
+        transactions = st.session_state.plex_db.query_table_between(addresses, start_timestamp, end_timestamp, "transactions")
 
         # perform pnl explain
         st.latex(r'PnL_{\text{delta}} = \sum \Delta P_{\text{underlying}} \times N^{\text{start}}')
         st.latex(r'PnL_{\text{basis}} = \sum \Delta (P_{\text{asset}}-P_{\text{underlying}}) \times N^{\text{start}}')
         st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
-        st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
+        st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot, transactions=transactions)
         display_pivot(st.session_state.plex,
                       rows=['underlying', 'asset'],
                       columns=['pnl_bucket'],
@@ -132,17 +129,22 @@ with pnl_tab:
 
     with history_tab:
         # snapshots
-        snapshots_within = pd.concat([st.session_state.plex_db.query_snapshots_within(address, start_datetime, end_datetime)
-                                      for address in st.session_state.parameters['profile']['addresses']], axis=0, ignore_index=True)
+        snapshots_within = st.session_state.plex_db.query_table_between(st.session_state.parameters['profile']['addresses'], start_timestamp, end_timestamp, "snapshots")
         # explains btw snapshots
         explains = []
+        tx_pnl = []
         for start, end in zip(
                 snapshots_within['timestamp'].unique()[:-1],
                 snapshots_within['timestamp'].unique()[1:],
         ):
             start_snapshots = snapshots_within[snapshots_within['timestamp'] == start]
             end_snapshots = snapshots_within[snapshots_within['timestamp'] == end]
-            explains.append(st.session_state.pnl_explainer.explain(start_snapshots, end_snapshots))
+            # transactions
+            transactions = st.session_state.plex_db.query_table_between(addresses, start, end, "transactions")
+
+            explain = st.session_state.pnl_explainer.explain(start_snapshots, end_snapshots, transactions)
+            explains.append(explain[0])
+            tx_pnl.append(explain[1])
         explains = pd.concat(explains, axis=0, ignore_index=True)
 
         # plot timeseries of pnl by some staked_columns

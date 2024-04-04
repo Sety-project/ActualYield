@@ -16,6 +16,8 @@ import sqlite3
 from pandas import DataFrame
 
 
+TableType = typing.NewType('TableType', typing.Literal["snapshots", "transactions"])
+
 class RawDataDB(ABC):
     '''
     Abstract class for RawDataDB, where we put raw data in cold storage.
@@ -25,33 +27,38 @@ class RawDataDB(ABC):
         return getattr(sys.modules[__name__], config['type'])(config, secrets)
 
     @abstractmethod
-    def query_snapshot(self, address: str, timestamp: int) -> dict:
+    def query_table(self, address: str, timestamp: int, table_name: TableType) -> dict:
         raise NotImplementedError
 
     @abstractmethod
-    def insert_snapshot(self, dict_result: dict, address: str) -> None:
+    def insert_table(self, dict_result: dict, address: str, table_name: TableType) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def all_timestamps(self, address: str) -> list[int]:
+    def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
         raise NotImplementedError
 
 
 class LocalJsonRawDataDB(RawDataDB):
+
     def __init__(self, config: dict):
         self.data_dir = config['data_dir']
 
-    def query_snapshot(self, address: str, timestamp: int) -> dict:
-        with open(os.path.join(self.data_dir, f'snapshot_{address}_{timestamp}.json'), 'r') as f:
+    def query_table(self, address: str, timestamp: int, table_name: TableType) -> dict:
+        with open(os.path.join(self.data_dir, f'{table_name}_{address}_{timestamp}.json'), 'r') as f:
             return json.load(f)
 
-    def insert_snapshot(self, dict_result: dict, address: str) -> None:
-        with open(os.path.join(os.sep, self.data_dir, f"snapshot_{address}_{int(dict_result['timestamp'])}.json"), 'w') as f:
-            json.dump(dict_result, f)
+    def insert_table(self, dict_result: dict, address: str, table_name: TableType) -> None:
+        if 'start_timestamp' in dict_result and 'end_timestamp' in dict_result:
+            with open(os.path.join(os.sep, self.data_dir, f"{table_name}_{address}_{dict_result['start_timestamp']}_{dict_result['end_timestamp']}.json"), 'w') as f:
+                json.dump(dict_result, f)
+        else:
+            with open(os.path.join(os.sep, self.data_dir, f"{table_name}_{address}_{int(dict_result['timestamp'])}.json"), 'w') as f:
+                json.dump(dict_result, f)
 
-    def all_timestamps(self, address: str) -> list[int]:
+    def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
         return [int(file.split('_')[2].split('.')[0]) for file in os.listdir(self.data_dir)
-                if file.startswith('snapshot') and file.endswith('.json') and address in file]
+                if file.startswith(table_name) and file.endswith('.json') and address in file]
 
 
 class S3JsonRawDataDB(RawDataDB):
@@ -62,19 +69,22 @@ class S3JsonRawDataDB(RawDataDB):
                                                          aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
                                                          aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY'])
 
-    def query_snapshot(self, address: str, timestamp: int) -> dict:
-        key = os.path.join(self.data_dir, f'snapshot_{address}_{timestamp}.json')
+    def query_table(self, address: str, timestamp: int, table_name: TableType) -> dict:
+        key = os.path.join(self.data_dir, f'{table_name}_{address}_{timestamp}.json')
         response = self.connection.get_object(self.bucket_name, key)
         return response['Body'].read().decode('utf-8')
 
-    def insert_snapshot(self, dict_result: dict, address: str) -> None:
-        key = os.path.join(self.data_dir, f"snapshot_{address}_{int(dict_result['timestamp'])}.json")
+    def insert_table(self, dict_result: dict, address: str, table_name: TableType) -> None:
+        if 'start_timestamp' in dict_result and 'end_timestamp' in dict_result:
+            key = os.path.join(self.data_dir, f"{table_name}_{address}_{dict_result['start_timestamp']}_{dict_result['end_timestamp']}.json")
+        else:
+            key = os.path.join(self.data_dir, f"{table_name}_{address}_{int(dict_result['timestamp'])}.json")
         json_data = json.dumps(dict_result)
         self.connection.put_object(Bucket=self.bucket_name, Key=key, Body=json_data)
 
-    def all_timestamps(self, address: str) -> list[int]:
+    def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
         response = self.connection.list_objects_v2(Bucket=self.bucket_name, Prefix=self.data_dir)
-        files = [obj['Key'] for obj in response.get('Contents', [])]
+        files = [obj['Key'] for obj in response.get('Contents', []) if table_name in obj['Key']]
         return [int(file['Key'].split('/')[-1].split('_')[2].split('.')[0]) for file in files
                 if file['Key'].endswith('.json') and address in file['Key']]
 
@@ -84,50 +94,26 @@ class PlexDB(ABC):
     Abstract class for PlexDB, where we put snapshots, one table per address
     '''
     @abstractmethod
-    def query_snapshot(self, address: str, timestamp: int) -> pd.DataFrame:
+    def query_table_at(self, addresses: list[str], timestamp: int, table_name: TableType) -> pd.DataFrame:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def query_table_between(self, addresses: list[str], start_timestamp: int, end_timestamp: int, table_name: TableType) -> pd.DataFrame:
         raise NotImplementedError
 
     @abstractmethod
-    def insert_snapshot(self, df: pd.DataFrame) -> None:
+    def insert_table(self, df: pd.DataFrame, table_name: TableType) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def all_timestamps(self, address: str) -> list[int]:
+    def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
         raise NotImplementedError
 
-    def query_start_end_snapshots(self, address: str, start_date: datetime, end_date: datetime = datetime.now()) -> dict[str, pd.DataFrame]:
-        timestamps = self.all_timestamps(address)
-        start_timestamp = next((ts for ts in sorted(timestamps, reverse=True)
-                                if ts <= start_date.timestamp()), min(timestamps))
-        end_timestamp = next((ts for ts in sorted(timestamps, reverse=False)
-                              if ts >= end_date.timestamp()), max(timestamps))
-
-        start_snapshot = self.query_snapshot(address, start_timestamp)
-        end_snapshot = self.query_snapshot(address, end_timestamp)
-        transactions = []
-
-        return {'start_snapshot': start_snapshot,
-                'end_snapshot': end_snapshot}
-
-    def query_snapshots_within(self, address: str, start_date: datetime, end_date: datetime = datetime.now()) -> DataFrame:
-        timestamps = self.all_timestamps(address)
-        start_timestamp = next((ts for ts in sorted(timestamps, reverse=True)
-                                if ts <= start_date.timestamp()), min(timestamps))
-        end_timestamp = next((ts for ts in sorted(timestamps, reverse=False)
-                              if ts >= end_date.timestamp()), max(timestamps))
-
-        result = pd.concat([self.query_snapshot(address, ts)
-                          for ts in timestamps
-                          if start_timestamp <= ts <= end_timestamp], axis=0)
-        result['timestamp'] = pd.to_datetime(result['timestamp'], unit='s', utc=True)
-
-        return result
-
-    def last_updated(self, address: str) -> tuple[datetime, pd.DataFrame]:
-        if all_timestamps := self.all_timestamps(address):
+    def last_updated(self, address: str, table_name: TableType) -> tuple[datetime, pd.DataFrame]:
+        if all_timestamps := self.all_timestamps(address, table_name):
             timestamp = max(all_timestamps)
-            latest_snapshot = self.query_snapshot(address, timestamp)
-            return datetime.fromtimestamp(timestamp, tz=timezone.utc), latest_snapshot
+            latest_table = self.query_table_at([address], timestamp, table_name)
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc), latest_table
         else:
             return datetime(1970, 1, 1, tzinfo=timezone.utc), {}
 
@@ -185,22 +171,25 @@ class SQLiteDB(PlexDB):
         s3.upload_file(self.data_location['local_file'], self.data_location['bucket_name'],
                        self.data_location['remote_file'])
 
-    def insert_snapshot(self, df: pd.DataFrame) -> None:
+    def insert_table(self, df: pd.DataFrame, table_name: TableType) -> None:
         for address, data in df.groupby('address'):
-            table_name = f"plex_data_{address}"
-            data.drop(columns='address').to_sql(table_name, self.conn, if_exists='append', index=False)
+            table = f"{table_name}_{address}"
+            data.drop(columns='address').to_sql(table, self.conn, if_exists='append', index=False)
             self.conn.commit()
 
-    def query_snapshot(self, address: str, timestamp: int) -> pd.DataFrame:
-        table_name = f"plex_data_{address}"
-        return pd.read_sql_query(f'SELECT * FROM {table_name} WHERE timestamp = {timestamp}',
-                          self.conn)
+    def query_table_at(self, addresses: list[str], timestamp: int, table_name: TableType) -> pd.DataFrame:
+        return pd.concat([pd.read_sql_query(f'SELECT * FROM {table_name}_{address} WHERE timestamp = {timestamp}', self.conn)
+                            for address in addresses], ignore_index=True, axis=0)
 
-    def all_timestamps(self, address: str) -> list[int]:
-        self.cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='plex_data_{address}';")
+    def query_table_between(self, addresses: list[str], start_timestamp: int, end_timestamp: int, table_name: TableType) -> pd.DataFrame:
+        return pd.concat([pd.read_sql_query(f'SELECT * FROM {table_name}_{address} WHERE {start_timestamp} <= timestamp <= {end_timestamp}',self.conn)
+                          for address in addresses], ignore_index=True, axis=0)
+    
+    def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
+        self.cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}_{address}';")
         if not self.cursor.fetchall():
             return []
-        self.cursor.execute(f'SELECT DISTINCT timestamp FROM plex_data_{address}')
+        self.cursor.execute(f'SELECT DISTINCT timestamp FROM {table_name}_{address}')
         rows = self.cursor.fetchall()
         return [row[0] for row in rows]
 
