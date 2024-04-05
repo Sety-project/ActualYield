@@ -24,9 +24,7 @@ class PnlExplainer:
             return False
         return True
 
-    def explain(self, start_snapshot: pd.DataFrame, end_snapshot: pd.DataFrame, transactions: pd.DataFrame = pd.DataFrame()) -> DataFrame | \
-                                                                                                                                tuple[
-                                                                                                                                    DataFrame, Any]:
+    def explain(self, start_snapshot: pd.DataFrame, end_snapshot: pd.DataFrame) -> DataFrame:
         snapshot_start = start_snapshot.set_index([col for col in start_snapshot.columns if col not in ['price', 'amount', 'value', 'timestamp']])
         snapshot_end = end_snapshot.set_index([col for col in end_snapshot.columns if col not in ['price', 'amount', 'value', 'timestamp']])
         data = snapshot_start.join(snapshot_end, how='outer', lsuffix='_start', rsuffix='_end')
@@ -57,14 +55,6 @@ class PnlExplainer:
         amt_chng_pnl['pnl_bucket'] = 'amt_chng'
         amt_chng_pnl['pnl'] = (data['amount_end'] - data['amount_start']) * data['price_end']
 
-        tx_pnl = transactions.groupby(by=['chain', 'protocol', 'action', 'asset']).sum()['value'].reset_index()
-        tx_pnl['pnl_bucket'] = 'tx_pnl'
-        tx_pnl['timestamp_start'] = start_snapshot['timestamp'].values[0]
-        tx_pnl['timestamp_end'] = end_snapshot['timestamp'].values[0]
-        tx_pnl['type'] = tx_pnl['action']
-        tx_pnl['underlying'] = tx_pnl['asset']
-        tx_pnl.rename(columns={'value': 'pnl', 'action': 'hold_mode'}, inplace=True)
-
         assert (data['value_end'] - data['value_start'] - delta_pnl['pnl'] - basis_pnl['pnl'] - amt_chng_pnl['pnl']).apply(abs).max() < 1, \
             "something doesn't add up..."
 
@@ -73,4 +63,14 @@ class PnlExplainer:
         result['timestamp_start'] = result['timestamp_start'].apply(
             lambda x: datetime.fromtimestamp(x, tz=timezone.utc))
 
-        return result, tx_pnl
+        return result
+
+    def format_transactions(self, start_snapshot_timestamp: int, end_snapshot_timestamp: int, transactions: pd.DataFrame) -> pd.DataFrame:
+        tx_pnl = transactions.groupby(by=['chain', 'protocol', 'type', 'asset']).sum()[['pnl', 'gas']].reset_index()
+        tx_pnl['pnl_bucket'] = 'tx_pnl'
+        tx_pnl['timestamp_start'] = start_snapshot_timestamp
+        tx_pnl['timestamp_end'] = end_snapshot_timestamp
+        tx_pnl['hold_mode'] = tx_pnl['type']
+        tx_pnl['underlying'] = tx_pnl['asset']
+
+        return tx_pnl

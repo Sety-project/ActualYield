@@ -72,7 +72,7 @@ def prompt_plex_interval(plex_db: PlexDB, addresses: list[str]) -> tuple[int, in
     end_timestamp = next((ts for ts in sorted(timestamps, reverse=False)
                           if ts >= end_datetime.timestamp()), max(timestamps))
 
-    st.write(f"Actual dates of snapshots: {pd.to_datetime(start_timestamp, utc=True)}, {pd.to_datetime(end_timestamp, utc=True)}")
+    st.write(f"Actual dates of snapshots: {datetime.fromtimestamp(start_timestamp)}, {datetime.fromtimestamp(end_timestamp)}")
 
     return start_timestamp, end_timestamp
 
@@ -118,3 +118,23 @@ def display_pivot(grid: pd.DataFrame, rows: list[str], columns: list[str], value
     grid[values] = grid[values].astype(int)
     grid = grid.sort_values(by=values[0], ascending=False)
     AgGrid(grid, gridOptions=go)
+
+
+def download_button(df: pd.DataFrame, label: str, file_name: str, file_type='text/csv'):
+    df.to_csv(file_name)
+    with open(file_name, "rb") as file:
+        st.download_button(
+            label=label,
+            data=file,
+            file_name=file_name,
+            mime=file_type
+        )
+
+def download_db_button(db: PlexDB, label: str, file_name: str, file_type='application/x-sqlite3'):
+    with open(db.data_location['local_file'], "rb") as file:
+        st.sidebar.download_button(
+            label=label,
+            data=file,
+            file_name=file_name,
+            mime=file_type
+        )

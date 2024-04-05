@@ -20,7 +20,8 @@ if 'set_config' not in st.session_state:  # hack to have it run only once, and b
     st.set_page_config(layout="wide")
     st.session_state.set_config =True
 
-from utils.streamlit_utils import load_parameters, prompt_plex_interval, display_pivot
+from utils.streamlit_utils import load_parameters, prompt_plex_interval, display_pivot, download_button, \
+    download_db_button
 
 pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
@@ -44,15 +45,21 @@ risk_tab, pnl_tab = st.tabs(
 
 with st.sidebar.form("snapshot_form"):
     refresh = st.form_submit_button("fetch from debank", help="fetch from debank costs credits !")
+    if refresh:
+        debank_credits = st.session_state.api.get_credits()
     all_fetch = asyncio.run(safe_gather([st.session_state.api.fetch_snapshot(address, refresh=refresh)
                                          for address in addresses] +
                                         [st.session_state.api.fetch_transactions(address)
                                          for address in addresses if refresh],
                                         n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
-    snapshots = all_fetch[:len(addresses)]
     if refresh:
+        st.write(f"Debank credits used: {(debank_credits-st.session_state.api.get_credits())*200/1e6} $")
         st.session_state.plex_db.upload_to_s3()
+
+    snapshots = all_fetch[:len(addresses)]
     st.session_state.snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
+
+download_db_button(st.session_state.plex_db, file_name='snapshot.db', label='Download database')
 
 with risk_tab:
     # dynamic categorization
@@ -72,14 +79,7 @@ with risk_tab:
                       values=['value'],
                       hidden=['hold_mode', 'type', 'price', 'amount'])
 
-        st.session_state.snapshot.to_csv('temp.csv')
-        with open('temp.csv', "rb") as file:
-            st.download_button(
-                label="Download risk data",
-                data=file,
-                file_name='temp.csv',
-                mime='text/csv',
-            )
+        download_button(st.session_state.snapshot, file_name='snapshot.csv', label='Download snapshot')
 
         with st.form("categorization_form"):
             # categorization
@@ -100,59 +100,72 @@ with pnl_tab:
     details_tab, history_tab = st.tabs(["details", "history"])
 
     with details_tab:
-        # snapshots
-        start_snapshot = st.session_state.plex_db.query_table_at(addresses, start_timestamp, "snapshots")
-        end_snapshot = st.session_state.plex_db.query_table_at(addresses, end_timestamp, "snapshots")
-        # transactions
-        transactions = st.session_state.plex_db.query_table_between(addresses, start_timestamp, end_timestamp, "transactions")
+        ## display_pivot plex
+        st.subheader("Pnl Explain")
 
-        # perform pnl explain
         st.latex(r'PnL_{\text{delta}} = \sum \Delta P_{\text{underlying}} \times N^{\text{start}}')
         st.latex(r'PnL_{\text{basis}} = \sum \Delta (P_{\text{asset}}-P_{\text{underlying}}) \times N^{\text{start}}')
         st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
-        st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot, transactions=transactions)
+
+        start_snapshot = st.session_state.plex_db.query_table_at(addresses, start_timestamp, "snapshots")
+        end_snapshot = st.session_state.plex_db.query_table_at(addresses, end_timestamp, "snapshots")
+        st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
+
         display_pivot(st.session_state.plex,
                       rows=['underlying', 'asset'],
                       columns=['pnl_bucket'],
                       values=['pnl'],
                       hidden=['protocol', 'chain', 'hold_mode', 'type'])
 
+        ## display_pivot transactions
+        st.subheader("Transactions")
+
+        transactions = st.session_state.plex_db.query_table_between(addresses, start_timestamp, end_timestamp, "transactions")
+        st.session_state.transactions = st.session_state.pnl_explainer.format_transactions(start_timestamp, end_timestamp, transactions)
+
+        display_pivot(st.session_state.transactions,
+                      rows=['asset'],
+                      columns=['type'],
+                      values=['gas', 'pnl'],
+                      hidden=['protocol', 'chain'])
+
         if 'plex' in st.session_state:
-            st.session_state.plex.to_csv('temp.csv')
-            with open('temp.csv', "rb") as file:
-                st.download_button(
-                    label="Download plex data",
-                    data=file,
-                    file_name='temp.csv',
-                    mime='text/csv',
-                )
+            plex_download_col, tx_download_col = st.columns(2)
+            with plex_download_col:
+                download_button(st.session_state.plex, file_name='plex.csv', label="Download plex data")
+            with tx_download_col:
+                download_button(st.session_state.transactions, file_name='tx.csv', label="Download tx data")
+                st.session_state.transactions.to_csv('tx.csv')
 
     with history_tab:
         # snapshots
         snapshots_within = st.session_state.plex_db.query_table_between(st.session_state.parameters['profile']['addresses'], start_timestamp, end_timestamp, "snapshots")
-        # explains btw snapshots
-        explains = []
-        tx_pnl = []
+        # explains and transactions btw snapshots
+        explain_list = []
+        transactions_list = []
         for start, end in zip(
                 snapshots_within['timestamp'].unique()[:-1],
                 snapshots_within['timestamp'].unique()[1:],
         ):
             start_snapshots = snapshots_within[snapshots_within['timestamp'] == start]
             end_snapshots = snapshots_within[snapshots_within['timestamp'] == end]
+            explain = st.session_state.pnl_explainer.explain(start_snapshots, end_snapshots)
+            explain_list.append(explain)
+
             # transactions
             transactions = st.session_state.plex_db.query_table_between(addresses, start, end, "transactions")
+            transactions = st.session_state.pnl_explainer.format_transactions(start, end, transactions)
+            transactions_list.append(transactions)
+        explains = pd.concat(explain_list, axis=0, ignore_index=True)
+        tx_pnl = pd.concat(transactions_list, axis=0, ignore_index=True)
 
-            explain = st.session_state.pnl_explainer.explain(start_snapshots, end_snapshots, transactions)
-            explains.append(explain[0])
-            tx_pnl.append(explain[1])
-        explains = pd.concat(explains, axis=0, ignore_index=True)
-
-        # plot timeseries of pnl by some staked_columns
+        '''
+        plot timeseries of explain by some staked_columns
+        '''
         categoricals = ['underlying', 'asset', 'protocol', 'pnl_bucket', 'chain', 'hold_mode', 'type']
         values = ['pnl']
         rows = ['timestamp_end']
         granularity_field = st.selectbox("granularity field", categoricals, index=0)
-        relevant_columns = categoricals + values + rows
         totals = pd.pivot_table(explains, values=values, columns=[granularity_field], index=rows, aggfunc='sum').cumsum()
         totals = totals.stack().reset_index()
 
@@ -164,12 +177,5 @@ with pnl_tab:
         st.plotly_chart(fig, use_container_width=True)
 
         if 'history' in st.session_state:
-            st.session_state.history.to_csv('temp.csv')
-            with open('temp.csv', "rb") as file:
-                st.download_button(
-                    label="Download history data",
-                    data=file,
-                    file_name='temp.csv',
-                    mime='text/csv',
-                )
+            download_button(st.session_state.history, file_name='history.csv', label="Download history data")
 

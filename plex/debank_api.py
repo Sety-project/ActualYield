@@ -20,6 +20,13 @@ class DebankAPI:
         self.json_db: RawDataDB = json_db
         self.plex_db: PlexDB = plex_db
 
+    def get_credits(self) -> float:
+        response = requests.get(f'{self.api_url}/account/units',
+                                headers={
+                                    "accept": "application/json",
+                                    "AccessKey": self.parameters['profile']['debank_key'],
+                                })
+        return response.json()['balance']
     async def _fetch_snapshot(self, address: str, write_to_json=True) -> dict:
         '''
         Fetches the position snapshot for a given address from the Debank API
@@ -215,13 +222,13 @@ class DebankAPI:
                                   'project_id'] else
                               leg['to_addr' if side == -1 else 'from_addr'],
                               'gas': tx['tx']['usd_gas_fee'] if 'usd_gas_fee' in tx['tx'] else 0.0,
-                              'action': tx['tx']['name'],
+                              'type': tx['tx']['name'],
                               'asset': leg['token_id'],
                               'amount': leg['amount'] * side}
                     if leg['token_id'] in transactions['token_dict']:
                         if transactions['token_dict'][leg['token_id']]['price']:
                             result['price'] = transactions['token_dict'][leg['token_id']]['price']
-                            result['value'] = leg['amount'] * result['price'] * side
+                            result['pnl'] = leg['amount'] * result['price'] * side
                     return result
 
 
@@ -232,5 +239,7 @@ class DebankAPI:
                     for cur_leg in tx['sends']:
                         result.append(append_leg(cur_leg, -1))
 
-        return pd.DataFrame(result)
+        df = pd.DataFrame(result)
+        df['pnl'] = df['pnl'] - df['gas']
+        return df
     
