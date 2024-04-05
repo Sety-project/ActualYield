@@ -1,7 +1,8 @@
+profile:
+  addresses:
+    - "0x7f8DA5FBD700a134842109c54ABA576D5c3712b8"
+    - "0xFaf2A8b5fa78cA2786cEf5F7e19f6942EC7cB531"
 input_data:
-#  raw_data_db:
-#    type: LocalJsonRawDataDB
-#    data_dir: actualyield/remote_data # path from home
   raw_data_db:
     type: S3JsonRawDataDB
     bucket_name: actualyield
@@ -10,11 +11,6 @@ input_data:
     type: sqlite
     bucket_name: actualyield # if not present, look locally, else S3 bucketname.
     remote_file: plex.db # path from home, ignoring key hash
-profile:
-  debank_key: ""
-  addresses:
-    - ""
-    - ""
 run_parameters:
   async:
     gather_limit: 10

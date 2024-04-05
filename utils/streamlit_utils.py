@@ -33,7 +33,9 @@ def load_parameters() -> dict:
         return yaml.safe_load(parameter_file)
     elif 'parameters' not in st.session_state:
         defaults['profile'] = {'debank_key': st.sidebar.text_input("debank key",
-                                                            help="you think i am going to pay for you?")}
+                                                                   value=st.secrets['debank_key']
+                                                                   if 'debank_key' in st.secrets else '',
+                                                                   help="you think i am going to pay for you?")}
         addresses = st.sidebar.text_area("addresses",
                                          help='Enter multiple strings, like a list')
 
