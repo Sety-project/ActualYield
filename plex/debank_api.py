@@ -142,9 +142,10 @@ class DebankAPI:
                                                            end_timestamp=int(datetime.now().timestamp()),
                                                            write_to_json=True)
         transactions = self.parse_all_history_list(transactions_list)
-        transactions['address'] = address
-        transactions = transactions[~transactions['id'].duplicated()]
-        self.plex_db.insert_table(transactions, "transactions")
+        if not transactions.empty:
+            transactions['address'] = address
+            transactions = transactions[~transactions['id'].duplicated()]
+            self.plex_db.insert_table(transactions, "transactions")
         return transactions
 
     @staticmethod
@@ -226,7 +227,7 @@ class DebankAPI:
                               'asset': leg['token_id'],
                               'amount': leg['amount'] * side}
                     if leg['token_id'] in transactions['token_dict']:
-                        if transactions['token_dict'][leg['token_id']]['price']:
+                        if ('price' in transactions['token_dict'][leg['token_id']]) and transactions['token_dict'][leg['token_id']]['price']:
                             result['price'] = transactions['token_dict'][leg['token_id']]['price']
                             result['pnl'] = leg['amount'] * result['price'] * side
                     return result
@@ -240,6 +241,7 @@ class DebankAPI:
                         result.append(append_leg(cur_leg, -1))
 
         df = pd.DataFrame(result)
-        df['pnl'] = df['pnl'] - df['gas']
+        if not df.empty:
+            df['pnl'] = df['pnl'] - df['gas']
         return df
     

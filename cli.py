@@ -17,6 +17,8 @@ if __name__ == '__main__':
             secrets = toml.load(f)
         with open(os.path.join(os.sep, os.getcwd(), 'config', 'params.yaml'), 'r') as f:
             parameters = yaml.safe_load(f)
+            if 'debank_key' not in parameters['profile']:
+                parameters['profile']['debank_key'] = secrets['debank_key']
 
         # tamper with the db file name to add hash of debank key
         plex_db_params = copy.deepcopy(parameters['input_data']['plex_db'])
