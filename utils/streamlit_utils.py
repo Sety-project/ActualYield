@@ -12,7 +12,7 @@ import yaml
 from plotly import express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
 
-from utils.db import PlexDB
+from utils.db import SQLiteDB
 
 
 def load_parameters() -> dict:
@@ -49,7 +49,7 @@ def load_parameters() -> dict:
         return st.session_state.parameters
 
 
-def prompt_plex_interval(plex_db: PlexDB, addresses: list[str]) -> tuple[int, int]:
+def prompt_plex_interval(plex_db: SQLiteDB, addresses: list[str]) -> tuple[int, int]:
     date_col, time_col = st.columns(2)
     now_datetime = datetime.now()
     with time_col:
@@ -132,7 +132,7 @@ def download_button(df: pd.DataFrame, label: str, file_name: str, file_type='tex
             mime=file_type
         )
 
-def download_db_button(db: PlexDB, label: str, file_name: str, file_type='application/x-sqlite3'):
+def download_db_button(db: SQLiteDB, label: str, file_name: str, file_type='application/x-sqlite3'):
     with open(db.data_location['local_file'], "rb") as file:
         st.sidebar.download_button(
             label=label,

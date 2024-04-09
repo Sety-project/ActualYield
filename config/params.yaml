@@ -1,4 +1,5 @@
 profile:
+  debank_key: "0b9786c662bff596482c995ef9c654aa3663a120"
   addresses:
     - "0x7f8DA5FBD700a134842109c54ABA576D5c3712b8"
     - "0xFaf2A8b5fa78cA2786cEf5F7e19f6942EC7cB531"

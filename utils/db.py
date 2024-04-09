@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
+import yaml
 from botocore.exceptions import ClientError
 import pandas as pd
 import sqlite3
@@ -89,45 +90,7 @@ class S3JsonRawDataDB(RawDataDB):
                 if file['Key'].endswith('.json') and address in file['Key']]
 
 
-class PlexDB(ABC):
-    '''
-    Abstract class for PlexDB, where we put snapshots, one table per address
-    '''
-    @abstractmethod
-    def query_table_at(self, addresses: list[str], timestamp: int, table_name: TableType) -> pd.DataFrame:
-        raise NotImplementedError
-    
-    @abstractmethod
-    def query_table_between(self, addresses: list[str], start_timestamp: int, end_timestamp: int, table_name: TableType) -> pd.DataFrame:
-        raise NotImplementedError
-
-    @abstractmethod
-    def insert_table(self, df: pd.DataFrame, table_name: TableType) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
-        raise NotImplementedError
-
-    def last_updated(self, address: str, table_name: TableType) -> tuple[datetime, pd.DataFrame]:
-        if all_timestamps := self.all_timestamps(address, table_name):
-            timestamp = max(all_timestamps)
-            latest_table = self.query_table_at([address], timestamp, table_name)
-            return datetime.fromtimestamp(timestamp, tz=timezone.utc), latest_table
-        else:
-            return datetime(1970, 1, 1, tzinfo=timezone.utc), {}
-
-
-class SQLiteDB(PlexDB):
-    plex_schema = {'chain': 'TEXT',
-                   'protocol': 'TEXT',
-                   'hold_mode': 'TEXT',
-                   'type': 'TEXT',
-                   'asset': 'TEXT',
-                   'amount': 'REAL',
-                   'price': 'REAL',
-                   'value': 'REAL',
-                   'timestamp': 'INTEGER'}
+class SQLiteDB:
     def __init__(self, config: dict, secrets: dict):
         if 'bucket_name' in config and 'remote_file' in config:
             # if bucket_name is in config, we are using s3 and download the file to ~
@@ -164,6 +127,14 @@ class SQLiteDB(PlexDB):
         os.chmod(local_file, 0o777)
         self.cursor = self.conn.cursor()
 
+    def last_updated(self, address: str, table_name: TableType) -> tuple[datetime, pd.DataFrame]:
+        if all_timestamps := self.all_timestamps(address, table_name):
+            timestamp = max(all_timestamps)
+            latest_table = self.query_table_at([address], timestamp, table_name)
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc), latest_table
+        else:
+            return datetime(1970, 1, 1, tzinfo=timezone.utc), pd.DataFrame()
+
     def upload_to_s3(self):
         s3 = boto3.client('s3',
                           aws_access_key_id=self.secrets['AWS_ACCESS_KEY_ID'],
@@ -175,7 +146,6 @@ class SQLiteDB(PlexDB):
         for address, data in df.groupby('address'):
             table = f"{table_name}_{address}"
             data.drop(columns='address').to_sql(table, self.conn, if_exists='append', index=False)
-            self.conn.commit()
 
     def query_table_at(self, addresses: list[str], timestamp: int, table_name: TableType) -> pd.DataFrame:
         return pd.concat([pd.read_sql_query(f'SELECT * FROM {table_name}_{address} WHERE timestamp = {timestamp}', self.conn)
@@ -192,4 +162,17 @@ class SQLiteDB(PlexDB):
         self.cursor.execute(f'SELECT DISTINCT timestamp FROM {table_name}_{address}')
         rows = self.cursor.fetchall()
         return [row[0] for row in rows]
+    
+    def query_categories(self) -> dict:
+        tables = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table'", self.conn)
+        if 'categories' not in tables.values:
+            pd.DataFrame(columns=['asset', 'underlying']).to_sql('categories', self.conn, index=False)
+            return {}
+        return pd.read_sql_query('SELECT * FROM categories', self.conn).set_index('asset')['underlying'].to_dict()
 
+    def overwrite_categories(self, categories: dict) -> None:
+        # if True:
+        #     with open(os.path.join(os.getcwd(), 'config', 'categories_SAVED.yaml'), 'r') as file:
+        #         categories = yaml.safe_load(file)
+        pd.DataFrame({'asset':categories.keys(), 'underlying': categories.values()}).to_sql('categories', self.conn, index=False, if_exists='replace')
+        self.conn.commit()

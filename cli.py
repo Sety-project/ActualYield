@@ -9,7 +9,7 @@ import yaml
 
 from plex.debank_api import DebankAPI
 from utils.async_utils import safe_gather
-from utils.db import PlexDB, SQLiteDB, RawDataDB, S3JsonRawDataDB
+from utils.db import SQLiteDB, SQLiteDB, RawDataDB, S3JsonRawDataDB
 
 if __name__ == '__main__':
     if sys.argv[1] =='snapshot':
@@ -24,7 +24,7 @@ if __name__ == '__main__':
         plex_db_params = copy.deepcopy(parameters['input_data']['plex_db'])
         plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db', f"_{parameters['profile']['debank_key']}.db")
 
-        plex_db: PlexDB = SQLiteDB(plex_db_params, secrets)
+        plex_db: SQLiteDB = SQLiteDB(plex_db_params, secrets)
         raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(parameters['input_data']['raw_data_db'], secrets)
         api = DebankAPI(raw_data_db, plex_db, parameters)
 

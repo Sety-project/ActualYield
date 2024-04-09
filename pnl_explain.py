@@ -11,7 +11,7 @@ import plotly.express as px
 
 from plex.plex import PnlExplainer
 from utils.async_utils import safe_gather
-from utils.db import SQLiteDB, RawDataDB, PlexDB
+from utils.db import SQLiteDB, RawDataDB
 from plex.debank_api import DebankAPI
 
 assert (sys.version_info >= (3, 10)), "Please use Python 3.10 or higher"
@@ -32,12 +32,12 @@ if 'plex_db' not in st.session_state:
     plex_db_params = copy.deepcopy(st.session_state.parameters['input_data']['plex_db'])
     plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db',
                                                                           f"_{st.session_state.parameters['profile']['debank_key']}.db")
-    st.session_state.plex_db: PlexDB = SQLiteDB(plex_db_params, st.secrets)
+    st.session_state.plex_db: SQLiteDB = SQLiteDB(plex_db_params, st.secrets)
     raw_data_db: RawDataDB = RawDataDB.build_RawDataDB(st.session_state.parameters['input_data']['raw_data_db'], st.secrets)
     st.session_state.api = DebankAPI(json_db=raw_data_db,
                                      plex_db=st.session_state.plex_db,
                                      parameters=st.session_state.parameters)
-    st.session_state.pnl_explainer = PnlExplainer()
+    st.session_state.pnl_explainer = PnlExplainer(st.session_state.plex_db.query_categories())
 
 addresses = st.session_state.parameters['profile']['addresses']
 risk_tab, pnl_tab = st.tabs(
@@ -90,8 +90,8 @@ with risk_tab:
             edited_categorization = st.data_editor(categorization, use_container_width=True)['underlying'].to_dict()
             if st.form_submit_button("Override categorization"):
                 st.session_state.pnl_explainer.categories = edited_categorization
-                with open(st.session_state.pnl_explainer.categories_path, 'w') as f:
-                    yaml.dump(edited_categorization, f)
+                st.session_state.plex_db.overwrite_categories(edited_categorization)
+                st.session_state.plex_db.upload_to_s3()
                 st.success("Categories updated (not exposure!)")
 
 with pnl_tab:

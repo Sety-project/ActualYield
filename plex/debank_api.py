@@ -9,16 +9,16 @@ import aiohttp
 import streamlit as st
 
 from utils.async_utils import safe_gather
-from utils.db import RawDataDB, PlexDB
+from utils.db import RawDataDB, SQLiteDB
 
 
 class DebankAPI:
     endpoints = ["all_complex_protocol_list", "all_token_list", "all_nft_list"]
     api_url = "https://pro-openapi.debank.com/v1"
-    def __init__(self, json_db: RawDataDB, plex_db: PlexDB, parameters: Dict[str, Any]):
+    def __init__(self, json_db: RawDataDB, plex_db: SQLiteDB, parameters: Dict[str, Any]):
         self.parameters = parameters
         self.json_db: RawDataDB = json_db
-        self.plex_db: PlexDB = plex_db
+        self.plex_db: SQLiteDB = plex_db
 
     def get_credits(self) -> float:
         response = requests.get(f'{self.api_url}/account/units',

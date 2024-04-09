@@ -10,18 +10,16 @@ from pandas import DataFrame
 
 
 class PnlExplainer:
-    def __init__(self):
-        self.categories_path = os.path.join(os.getcwd(), 'config', 'categories.yaml')
-        with open(self.categories_path, 'r') as f:
-            self.categories = yaml.safe_load(f)
+    def __init__(self, categories: dict[str, str]):
+        self.categories = categories
 
     def validate_categories(self, data) -> bool:
         if missing_category := set(data['asset']) - set(self.categories.keys()):
             st.warning(f"Categories need to be updated. Please categorize the following assets: {missing_category}")
             return False
-        if missing_underlying := set(self.categories.values()) - set(data['asset']):
-            st.warning(f"I need underlying {missing_underlying} to have a position, maybe get some dust? Sorry...")
-            return False
+        # if missing_underlying := set(self.categories.values()) - set(data['asset']):
+        #     st.warning(f"I need underlying {missing_underlying} to have a position, maybe get some dust? Sorry...")
+        #     return False
         return True
 
     def explain(self, start_snapshot: pd.DataFrame, end_snapshot: pd.DataFrame) -> DataFrame:
