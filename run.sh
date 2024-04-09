@@ -1,11 +1,10 @@
 #!/bin/bash
-
 cd ~/actualyield
-
-# Activate the virtual environment
 source ./venv/bin/activate
 
-# Run the Python script
+git pull origin main
+pip install -r requirements.txt
+
 python3 ./cli.py snapshot >> ./cli.log
 
 # Deactivate the virtual environment
