@@ -32,22 +32,22 @@ class PnlExplainer:
             return pd.DataFrame()
 
         data['underlying'] = data.apply(lambda x: self.categories[x['asset']], axis=1)
-        data['dP'] = data['price_end'] - data['price_start']
         # TODO: messy since we need position on same chain, USD and EUR don't work...need coingecko snap.
-        data['dP_underlying'] = data.apply(lambda x: data.loc[data['asset'] == x['underlying'], 'dP'].mean(), axis=1)
-        data['dP_basis'] = data['dP'] - data['dP_underlying']
+        data[['P_underlying_start', 'P_underlying_end']] = data.apply(lambda x: data.loc[data['asset'] == x['underlying'], ['price_start', 'price_end']].mean(), axis=1)
+        # data['dP_basis'] = data['dP'] / data['dP_underlying']
         data['timestamp_start'] = min(data['timestamp_start'])
         data['timestamp_end'] = max(data['timestamp_end'])
         data = data.fillna(0)
 
-        # now we add one row per pnl bucket, this ensures nice subtotal rendering
+        # delta is underlying-equivalent amount * dP
         delta_pnl = copy.deepcopy(data)
         delta_pnl['pnl_bucket'] = 'delta'
-        delta_pnl['pnl'] = data['dP_underlying'] * data['amount_start']
+        delta_pnl['pnl'] = (data['P_underlying_end'] - data['P_underlying_start']) * data['amount_start'] * data['price_start'] / data['P_underlying_start']
 
+        # basis is the rest
         basis_pnl = copy.deepcopy(data)
         basis_pnl['pnl_bucket'] = 'basis'
-        basis_pnl['pnl'] = data['dP_basis'] * data['amount_start']
+        basis_pnl['pnl'] = data['amount_start']*(data['price_end'] - data['price_start']) - delta_pnl['pnl']
 
         amt_chng_pnl = copy.deepcopy(data)
         amt_chng_pnl['pnl_bucket'] = 'amt_chng'
