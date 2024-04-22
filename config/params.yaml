@@ -21,6 +21,4 @@ run_parameters:
 plex:
   update_frequency: 1 # in minutes
   redundant_protocols:
-    - LIDO
-    - Swell
-    - Maker
+    - None

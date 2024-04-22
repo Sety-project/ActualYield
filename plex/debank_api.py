@@ -189,7 +189,7 @@ class DebankAPI:
                 'value': position['amount'] * position['price'],
             }
             for position in snapshot
-            if position['is_verified'] and (position['price'] > 0)
+            if position['is_verified'] and position['is_core'] and (position['price'] > 0)
         ]
 
     @staticmethod
