@@ -73,7 +73,7 @@ with risk_tab:
             st.session_state.pnl_explainer.categories)
         # risk = copy.deepcopy(st.session_state.snapshot)
         # risk['value'] = risk['value'] / 1000
-        display_pivot(st.session_state.snapshot,
+        display_pivot(st.session_state.snapshot.loc[st.session_state.snapshot['value'].apply(lambda x: abs(x) > st.session_state.snapshot['value'].sum() * 1e-4)],
                       rows=['underlying', 'asset', 'chain', 'protocol'],
                       columns=['address'],
                       values=['value'],
@@ -103,15 +103,16 @@ with pnl_tab:
         ## display_pivot plex
         st.subheader("Pnl Explain")
 
-        st.latex(r'PnL_{\text{delta}} = \sum \Delta P_{\text{underlying}} \times N^{\text{start}}')
-        st.latex(r'PnL_{\text{basis}} = \sum \Delta (P_{\text{asset}}-P_{\text{underlying}}) \times N^{\text{start}}')
+        st.latex(r'PnL_{\text{full delta}} = \sum (P_{\text{asset}}^1-P_{\text{asset}}^0) \times N^{\text{start}}')
+        st.latex(r'PnL_{\text{delta}} = \sum (\frac{P_{\text{underlying}}^1}{P_{\text{underlying}}^0}-1) \times N^{\text{start}} \frac{P_{\text{underlying}}^0}{P_{\text{asset}}^0}')
+        st.latex(r'PnL_{\text{basis}} = PnL_{\text{full delta}} - PnL_{\text{delta}}')
         st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
 
         start_snapshot = st.session_state.plex_db.query_table_at(addresses, start_timestamp, "snapshots")
         end_snapshot = st.session_state.plex_db.query_table_at(addresses, end_timestamp, "snapshots")
         st.session_state.plex = st.session_state.pnl_explainer.explain(start_snapshot=start_snapshot, end_snapshot=end_snapshot)
 
-        display_pivot(st.session_state.plex,
+        display_pivot(st.session_state.plex.loc[st.session_state.plex['pnl'].apply(lambda x: abs(x) > start_snapshot['value'].sum() * 1e-4)],
                       rows=['underlying', 'asset'],
                       columns=['pnl_bucket'],
                       values=['pnl'],
@@ -124,10 +125,10 @@ with pnl_tab:
         st.session_state.transactions = st.session_state.pnl_explainer.format_transactions(start_timestamp, end_timestamp, transactions)
 
         display_pivot(st.session_state.transactions,
-                      rows=['asset'],
+                      rows=['underlying', 'asset'],
                       columns=['type'],
                       values=['gas', 'pnl'],
-                      hidden=['protocol', 'chain'])
+                      hidden=['id', 'protocol', 'chain'])
 
         if 'plex' in st.session_state:
             plex_download_col, tx_download_col = st.columns(2)
