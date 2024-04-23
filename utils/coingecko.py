@@ -7,8 +7,40 @@ from functools import wraps, lru_cache
 
 import pandas as pd
 import pycoingecko
+import requests
 import streamlit
 
+
+class ScannerAPI:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.network_map = {
+            "eth": "eth-mainnet",
+            "op": "op-mainnet",
+            "arb": "arb-mainnet",
+            "matic": "polygon-mainnet",
+            "base": "base-mainnet",
+        }
+
+    @streamlit.cache_data
+    def get_token_symbol(_self, address, network):
+        try:
+            url = f"https://{_self.network_map[network]}.g.alchemy.com/v2/{_self.api_key}"
+            payload = {
+                # "id": 1,
+                "jsonrpc": "2.0",
+                "method": "alchemy_getTokenMetadata",
+                "params": [address]
+            }
+            headers = {
+                "accept": "application/json",
+                "content-type": "application/json"
+            }
+            response = requests.post(url, json=payload, headers=headers)
+            data = response.json()
+            return data["result"]["symbol"].lower()
+        except Exception as e:
+            return address
 
 class myCoinGeckoAPI(pycoingecko.CoinGeckoAPI):
     defillama_mapping = ({'id': 'id',

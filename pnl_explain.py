@@ -37,7 +37,7 @@ if 'plex_db' not in st.session_state:
     st.session_state.api = DebankAPI(json_db=raw_data_db,
                                      plex_db=st.session_state.plex_db,
                                      parameters=st.session_state.parameters)
-    st.session_state.pnl_explainer = PnlExplainer(st.session_state.plex_db.query_categories())
+    st.session_state.pnl_explainer = PnlExplainer(st.session_state.plex_db.query_categories(),st.secrets['alchemy_key'])
 
 addresses = st.session_state.parameters['profile']['addresses']
 risk_tab, pnl_tab = st.tabs(
@@ -123,11 +123,11 @@ with pnl_tab:
 
         transactions = st.session_state.plex_db.query_table_between(addresses, start_timestamp, end_timestamp, "transactions")
         st.session_state.transactions = st.session_state.pnl_explainer.format_transactions(start_timestamp, end_timestamp, transactions)
-
+        st.session_state.transactions.rename(columns={'pnl': 'value'}, inplace=True)
         display_pivot(st.session_state.transactions,
                       rows=['underlying', 'asset'],
                       columns=['type'],
-                      values=['gas', 'pnl'],
+                      values=['gas', 'value'],
                       hidden=['id', 'protocol', 'chain'])
 
         if 'plex' in st.session_state:
