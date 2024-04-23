@@ -21,7 +21,7 @@ if 'set_config' not in st.session_state:  # hack to have it run only once, and b
     st.session_state.set_config =True
 
 from utils.streamlit_utils import load_parameters, prompt_plex_interval, display_pivot, download_button, \
-    download_db_button
+    download_db_button, prompt_snapshot_timestamp
 
 pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
@@ -43,25 +43,33 @@ addresses = st.session_state.parameters['profile']['addresses']
 risk_tab, pnl_tab = st.tabs(
     ["risk", "pnl"])
 
-with st.sidebar.form("snapshot_form"):
-    refresh = st.form_submit_button("fetch from debank", help="fetch from debank costs credits !")
-    if refresh:
-        debank_credits = st.session_state.api.get_credits()
-    all_fetch = asyncio.run(safe_gather([st.session_state.api.fetch_snapshot(address, refresh=refresh)
-                                         for address in addresses] +
-                                        [st.session_state.api.fetch_transactions(address)
-                                         for address in addresses if refresh],
-                                        n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
-    if refresh:
-        st.write(f"Debank credits used: {(debank_credits-st.session_state.api.get_credits())*200/1e6} $")
-        st.session_state.plex_db.upload_to_s3()
-
-    snapshots = all_fetch[:len(addresses)]
-    st.session_state.snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
-
-download_db_button(st.session_state.plex_db, file_name='snapshot.db', label='Download database')
-
 with risk_tab:
+    with st.form("snapshot_form"):
+        refresh_tab, historical_tab = st.columns(2)
+        with refresh_tab:
+            if refresh := st.form_submit_button("fetch live from debank", help="fetch from debank costs credits !"):
+                timestamp = int(datetime.now().timestamp())
+                debank_credits = st.session_state.api.get_credits()
+        with historical_tab:
+            timestamp = prompt_snapshot_timestamp(st.session_state.plex_db, addresses)
+            historical = st.form_submit_button("fetch historical date", help="fetch from db")
+
+    if refresh or historical:
+        all_fetch = asyncio.run(
+            safe_gather([st.session_state.api.fetch_snapshot(address, refresh=refresh, timestamp=timestamp)
+                         for address in addresses] +
+                        [st.session_state.api.fetch_transactions(address)
+                         for address in addresses if refresh],
+                        n=st.session_state.parameters['run_parameters']['async']['gather_limit']))
+        if refresh:
+            st.write(f"Debank credits used: {(debank_credits - st.session_state.api.get_credits()) * 200 / 1e6} $")
+            st.session_state.plex_db.upload_to_s3()
+
+        snapshots = all_fetch[:len(addresses)]
+        st.session_state.snapshot = pd.concat(snapshots, axis=0, ignore_index=True)
+
+        download_db_button(st.session_state.plex_db, file_name='snapshot.db', label='Download database')
+
     # dynamic categorization
     if 'snapshot' in st.session_state:
         if missing_category := set(st.session_state.snapshot['asset']) - set(st.session_state.pnl_explainer.categories.keys()):

@@ -130,13 +130,12 @@ class SQLiteDB:
         os.chmod(local_file, 0o777)
         self.cursor = self.conn.cursor()
 
-    def last_updated(self, address: str, table_name: TableType) -> tuple[datetime, pd.DataFrame]:
+    def last_updated(self, address: str, table_name: TableType) -> datetime:
         if all_timestamps := self.all_timestamps(address, table_name):
             timestamp = max(all_timestamps)
-            latest_table = self.query_table_at([address], timestamp, table_name)
-            return datetime.fromtimestamp(timestamp, tz=timezone.utc), latest_table
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
         else:
-            return datetime(1970, 1, 1, tzinfo=timezone.utc), pd.DataFrame()
+            return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     def upload_to_s3(self):
         s3 = boto3.client('s3',

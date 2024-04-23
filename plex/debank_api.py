@@ -57,14 +57,15 @@ class DebankAPI:
 
         return dict_result
 
-    async def fetch_snapshot(self, address: str, refresh: bool) -> pd.DataFrame:
+    async def fetch_snapshot(self, address: str, timestamp: int = int(datetime.now().timestamp()), refresh: bool = False) -> pd.DataFrame:
         '''
         fetch from debank if not recently updated, or db if recently updated or refresh=False
         then write to json to disk
         returns parsed latest snapshot summed across all addresses
         only update once every 'update_frequency' minutes
         '''
-        updated_at, snapshot = self.plex_db.last_updated(address, "snapshots")
+        updated_at = self.plex_db.last_updated(address, "snapshots")
+        snapshot = self.plex_db.query_table_at([address], timestamp, "snapshots")
 
         # retrieve cache for addresses that have been updated recently, and always if refresh=False
         max_updated = datetime.now(tz=timezone.utc) - timedelta(
@@ -137,7 +138,7 @@ class DebankAPI:
         returns parsed latest snapshot summed across all addresses
         only update once every 'update_frequency' minutes
         '''
-        updated_at, _ = self.plex_db.last_updated(address, "transactions")
+        updated_at = self.plex_db.last_updated(address, "transactions")
 
         transactions_list = await self._fetch_transactions(address,
                                                            start_timestamp=int(updated_at.timestamp()),
