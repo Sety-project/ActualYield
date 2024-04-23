@@ -247,14 +247,19 @@ class DebankAPI:
             df['pnl'] = df['pnl'] - df['gas']
         return df
 
-    def rebuild_db_from_json(self, address: str):
+    def rebuild_db_from_json(self, address: str, delete_unreadable=False):
         all_snapshots_filenames = self.json_db.all_timestamps(address, "snapshots")
         for filename in all_snapshots_filenames:
             response = self.json_db.connection.get_object(Bucket=self.json_db.bucket_name, Key=filename)
             snapshot_dict = json.loads(response['Body'].read().decode('utf-8'))
-            snapshot = self.parse_snapshot(snapshot_dict)
-            self.plex_db.insert_table(snapshot, "snapshots")
-            logging.info(f"inserted to db from# {filename}")
+            try:
+                snapshot = self.parse_snapshot(snapshot_dict)
+                self.plex_db.insert_table(snapshot, "snapshots")
+                logging.info(f"inserted to db from# {filename}")
+            except Exception as e:
+                logging.error(f"{filename} -> Error: {e}", stack_info=True)
+                if delete_unreadable:
+                    self.json_db.connection.delete_object(Bucket=self.json_db.bucket_name, Key=filename)
 
         all_transactions_filenames = self.json_db.all_timestamps(address, "transactions")
         for filename in all_transactions_filenames:
@@ -268,5 +273,6 @@ class DebankAPI:
                     self.plex_db.insert_table(transactions, "transactions")
                     logging.info(f"inserted to db from# {filename}")
             except Exception as e:
-                logging.error(f"Error: {e}", stack_info=True)
-                continue
+                logging.error(f"{filename} Error: {e}", stack_info=True)
+                if delete_unreadable:
+                    self.json_db.connection.delete_object(Bucket=self.json_db.bucket_name, Key=filename)
