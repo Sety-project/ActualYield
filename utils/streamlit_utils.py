@@ -49,6 +49,26 @@ def load_parameters() -> dict:
         return st.session_state.parameters
 
 
+def prompt_snapshot_timestamp(plex_db: SQLiteDB, addresses: list[str]) -> int:
+    date_col, time_col = st.columns(2)
+    now_datetime = datetime.now()
+    with time_col:
+        time = st.time_input("time", value=now_datetime.time())
+    with date_col:
+        date = st.date_input("date", value=now_datetime)
+    result = datetime.combine(date, time)
+
+    # intersection of timestamps lists for all addresses
+    list_timestamps = [plex_db.all_timestamps(address, "snapshots") for address in addresses]
+    timestamps = [x for x in set(list_timestamps[0]) if all(x in lst for lst in list_timestamps)]
+
+    timestamp = next((ts for ts in sorted(timestamps, reverse=False)
+                          if ts >= result.timestamp()), max(timestamps))
+
+    st.write(f"Actual date of snapshot: {datetime.fromtimestamp(timestamp)}")
+
+    return int(timestamp)
+
 def prompt_plex_interval(plex_db: SQLiteDB, addresses: list[str]) -> tuple[int, int]:
     date_col, time_col = st.columns(2)
     now_datetime = datetime.now()
@@ -76,7 +96,7 @@ def prompt_plex_interval(plex_db: SQLiteDB, addresses: list[str]) -> tuple[int, 
 
     st.write(f"Actual dates of snapshots: {datetime.fromtimestamp(start_timestamp)}, {datetime.fromtimestamp(end_timestamp)}")
 
-    return start_timestamp, end_timestamp
+    return int(start_timestamp), int(end_timestamp)
 
 
 def display_pivot(grid: pd.DataFrame, rows: list[str], columns: list[str], values: list[str], hidden: list[str]):
