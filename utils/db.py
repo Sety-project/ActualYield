@@ -155,7 +155,7 @@ class SQLiteDB:
                             for address in addresses], ignore_index=True, axis=0)
 
     def query_table_between(self, addresses: list[str], start_timestamp: int, end_timestamp: int, table_name: TableType) -> pd.DataFrame:
-        return pd.concat([pd.read_sql_query(f'SELECT * FROM {table_name}_{address} WHERE {start_timestamp} <= timestamp <= {end_timestamp}',self.conn)
+        return pd.concat([pd.read_sql_query(f'SELECT * FROM {table_name}_{address} WHERE timestamp BETWEEN {start_timestamp} AND {end_timestamp}',self.conn)
                           for address in addresses], ignore_index=True, axis=0)
     
     def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
