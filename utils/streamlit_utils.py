@@ -56,7 +56,7 @@ def prompt_plex_interval(plex_db: SQLiteDB, addresses: list[str]) -> tuple[int, 
         start_time = st.time_input("start time", value=now_datetime.time())
         end_time = st.time_input("end time", value=now_datetime.time())
     with date_col:
-        start_date = st.date_input("start date", value=now_datetime - timedelta(days=7))
+        start_date = st.date_input("start date", value=now_datetime - timedelta(days=1))
         end_date = st.date_input("end date", value=now_datetime)
     start_datetime = datetime.combine(start_date, start_time)
     end_datetime = datetime.combine(end_date, end_time)
