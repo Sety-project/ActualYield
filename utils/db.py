@@ -72,8 +72,8 @@ class S3JsonRawDataDB(RawDataDB):
 
     def query_table(self, address: str, timestamp: int, table_name: TableType) -> dict:
         key = os.path.join(self.data_dir, f'{table_name}_{address}_{timestamp}.json')
-        response = self.connection.get_object(self.bucket_name, key)
-        return response['Body'].read().decode('utf-8')
+        response = self.connection.get_object(Bucket=self.bucket_name, Key=key)
+        return json.loads(response['Body'].read().decode('utf-8'))
 
     def insert_table(self, dict_result: dict, address: str, table_name: TableType) -> None:
         if 'start_timestamp' in dict_result and 'end_timestamp' in dict_result:
@@ -84,10 +84,10 @@ class S3JsonRawDataDB(RawDataDB):
         self.connection.put_object(Bucket=self.bucket_name, Key=key, Body=json_data)
 
     def all_timestamps(self, address: str, table_name: TableType) -> list[int]:
+        '''in fact returns filenames'''
         response = self.connection.list_objects_v2(Bucket=self.bucket_name, Prefix=self.data_dir)
-        files = [obj['Key'] for obj in response.get('Contents', []) if table_name in obj['Key']]
-        return [int(file['Key'].split('/')[-1].split('_')[2].split('.')[0]) for file in files
-                if file['Key'].endswith('.json') and address in file['Key']]
+        return [obj['Key'] for obj in response.get('Contents', [])
+                 if table_name in obj['Key'] and obj['Key'].endswith('.json') and address in obj['Key']]
 
 
 class SQLiteDB:
@@ -110,6 +110,9 @@ class SQLiteDB:
             except ClientError as e:
                 if e.response['Error']['Code'] == '404':
                     logging.warning(f'Creating new {self.data_location["local_file"]}')
+                    # create a new file, or overwrite existing one
+                    with open(self.data_location['local_file'], 'w') as f:
+                        f.write('')
                 else:
                     raise e
             local_file = self.data_location['local_file']

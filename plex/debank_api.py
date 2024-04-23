@@ -1,4 +1,6 @@
 import copy
+import json
+import logging
 import typing
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
@@ -244,4 +246,27 @@ class DebankAPI:
         if not df.empty:
             df['pnl'] = df['pnl'] - df['gas']
         return df
-    
+
+    def rebuild_db_from_json(self, address: str):
+        all_snapshots_filenames = self.json_db.all_timestamps(address, "snapshots")
+        for filename in all_snapshots_filenames:
+            response = self.json_db.connection.get_object(Bucket=self.json_db.bucket_name, Key=filename)
+            snapshot_dict = json.loads(response['Body'].read().decode('utf-8'))
+            snapshot = self.parse_snapshot(snapshot_dict)
+            self.plex_db.insert_table(snapshot, "snapshots")
+            logging.info(f"inserted to db from# {filename}")
+
+        all_transactions_filenames = self.json_db.all_timestamps(address, "transactions")
+        for filename in all_transactions_filenames:
+            response = self.json_db.connection.get_object(Bucket=self.json_db.bucket_name, Key=filename)
+            transactions_dict = json.loads(response['Body'].read().decode('utf-8'))
+            try:
+                transactions = self.parse_all_history_list(transactions_dict['tx_list'])
+                if not transactions.empty:
+                    transactions['address'] = address
+                    transactions = transactions[~transactions['id'].duplicated()]
+                    self.plex_db.insert_table(transactions, "transactions")
+                    logging.info(f"inserted to db from# {filename}")
+            except Exception as e:
+                logging.error(f"Error: {e}", stack_info=True)
+                continue
