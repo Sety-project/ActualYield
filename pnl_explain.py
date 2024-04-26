@@ -115,12 +115,12 @@ with risk_history_tab:
     categoricals = ['underlying', 'asset', 'protocol', 'chain', 'hold_mode', 'type']
     values = ['value']
     rows = ['timestamp']
-    granularity_field = st.selectbox("granularity field", categoricals, index=2)
-    totals = pd.pivot_table(risk_snapshots_within, values=values, columns=[granularity_field], index=rows, aggfunc='sum')
+    stacking_field = st.selectbox("granularity field", categoricals, index=2)
+    totals = pd.pivot_table(risk_snapshots_within, values=values, columns=[stacking_field], index=rows, aggfunc='sum')
     totals = totals.stack().reset_index()
 
     fig = px.bar(totals, x=rows[0], y=values[0],
-                 color=granularity_field, title='value',
+                 color=stacking_field, title='value',
                  barmode='stack')
     min_dt = 4 * 3600  # 4h
     fig.update_traces(width=min_dt * 1000)
@@ -193,16 +193,37 @@ with pnl_history_tab:
     categoricals = ['underlying', 'asset', 'protocol', 'pnl_bucket', 'chain', 'hold_mode', 'type']
     values = ['pnl']
     rows = ['timestamp_end']
-    granularity_field = st.selectbox("granularity field", categoricals, index=0)
-    totals = pd.pivot_table(explains, values=values, columns=[granularity_field], index=rows, aggfunc='sum').cumsum()
-    totals = totals.stack().reset_index()
 
-    fig = px.bar(totals, x=rows[0], y=values[0],
-                 color=granularity_field, title='cum_pnl',
-                 barmode='stack')
-    min_dt = 4*3600 # 4h
-    fig.update_traces(width=min_dt*1000)
-    st.plotly_chart(fig, use_container_width=True)
+    # define stacking variable
+    stacking_field = st.selectbox("granularity field", categoricals, index=2)
+    row_field = st.selectbox("rows field", [f for f in categoricals if f is not stacking_field], index=2)
+
+    # define filters
+    filtering = {}
+    filter_cols = [f for f in categoricals if f not in [row_field, stacking_field]]
+    filter_st_columns = st.columns(len(filter_cols))
+    for filter_col, filter_st_col in zip(filter_cols, filter_st_columns):
+        with filter_st_col:
+            if prompt := st.multiselect(label=filter_col, default='all', options=list(explains[filter_col].unique())+['all']):
+                filtering[filter_col] = prompt
+
+    for row in explains[row_field].unique():
+        df = explains[explains[row_field] == row]
+        df = df[explains.apply(lambda x: all(x[col] in selection
+                                                         for col, selection in filtering.items()
+                                                         if selection != ['all']),
+                                           axis=1)]
+
+        # pivot and display
+        totals = pd.pivot_table(df, values=values, columns=[stacking_field], index=rows, aggfunc='sum').cumsum()
+        totals = totals.stack().reset_index()
+
+        fig = px.bar(totals, x=rows[0], y=values[0],
+                     color=stacking_field, title=f'cum_pnl by {stacking_field}\n{row_field}={row}',
+                     barmode='stack')
+        min_dt = 4*3600 # 4h
+        fig.update_traces(width=min_dt*1000)
+        st.plotly_chart(fig, use_container_width=True)
 
     download_button(pnl_snapshots_within, file_name='snapshot.csv', label='Download pnl history')
 
