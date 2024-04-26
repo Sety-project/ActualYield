@@ -69,15 +69,15 @@ def prompt_snapshot_timestamp(plex_db: SQLiteDB, addresses: list[str]) -> int:
 
     return int(timestamp)
 
-def prompt_plex_interval(plex_db: SQLiteDB, addresses: list[str]) -> tuple[int, int]:
+def prompt_plex_interval(plex_db: SQLiteDB, addresses: list[str], nonce: str='', default_dt=timedelta(days=7)) -> tuple[int, int]:
     date_col, time_col = st.columns(2)
     now_datetime = datetime.now()
     with time_col:
-        start_time = st.time_input("start time", value=now_datetime.time())
-        end_time = st.time_input("end time", value=now_datetime.time())
+        start_time = st.time_input("start time", value=now_datetime.time(), key=f'st_{nonce}')
+        end_time = st.time_input("end time", value=now_datetime.time(), key=f'et_{nonce}')
     with date_col:
-        start_date = st.date_input("start date", value=now_datetime - timedelta(days=1))
-        end_date = st.date_input("end date", value=now_datetime)
+        start_date = st.date_input("start date", value=now_datetime - default_dt, key=f'sd_{nonce}')
+        end_date = st.date_input("end date", value=now_datetime, key=f'ed_{nonce}')
     start_datetime = datetime.combine(start_date, start_time)
     end_datetime = datetime.combine(end_date, end_time)
 
