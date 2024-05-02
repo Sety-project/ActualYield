@@ -160,3 +160,59 @@ def download_db_button(db: SQLiteDB, label: str, file_name: str, file_type='appl
             file_name=file_name,
             mime=file_type
         )
+
+
+def display_multi_stacked_bars(df: pd.DataFrame,
+                               categoricals: list[str],
+                               values: list[str],
+                               rows: list[str],
+                               default_stacking_field: str,
+                               default_row_field: str = 'all',
+                               cum_sum: bool = False,
+                               min_dt=4 * 3600,
+                               ):
+    '''
+    plot timeseries by some prompted staked_columns and row_field
+    '''
+
+    def display_stacked_bars():
+        cur_df = row_df[row_df.apply(lambda x: all(x[col] in selection
+                                       for col, selection in filtering.items()
+                                       if selection != ['all']),
+                         axis=1)]
+        # pivot and display
+        totals = pd.pivot_table(cur_df, values=values, columns=[stacking_field], index=rows, aggfunc='sum')
+        if cum_sum:
+            totals = totals.cumsum()
+        totals = totals.stack().reset_index()
+        fig = px.bar(totals, x=rows[0], y=values[0],
+                     color=stacking_field,
+                     title=f"{row}",
+                     barmode='stack')
+        fig.update_traces(width=min_dt * 1000)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # define stacking variable
+    stacking_field = st.selectbox("stack by",
+                                  options=categoricals,
+                                  index=categoricals.index(default_stacking_field))
+    options = ['all'] + [f for f in categoricals if f is not stacking_field]
+    row_field = st.selectbox("rows field",
+                             options=options,
+                             index=options.index(default_row_field))
+    # define filters
+    filtering = {}
+    filter_cols = [f for f in categoricals if f not in [row_field, stacking_field]]
+    filter_st_columns = st.columns(len(filter_cols))
+    for filter_col, filter_st_col in zip(filter_cols, filter_st_columns):
+        with filter_st_col:
+            if prompt := st.multiselect(label=filter_col, default='all',
+                                        options=list(df[filter_col].unique()) + ['all']):
+                filtering[filter_col] = prompt
+    if row_field != 'all':
+        for row, row_df in df.groupby(row_field):
+            display_stacked_bars()
+    else:
+        row = 'all'
+        row_df = df
+        display_stacked_bars()

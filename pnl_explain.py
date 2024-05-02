@@ -1,12 +1,10 @@
 import asyncio
 import copy
 import sys
-from datetime import timedelta, date, datetime, timezone, time
-from hashlib import sha256
+from datetime import timedelta, datetime
 
 import pandas as pd
 import streamlit as st
-import yaml
 import plotly.express as px
 
 from plex.plex import PnlExplainer
@@ -21,7 +19,7 @@ if 'set_config' not in st.session_state:  # hack to have it run only once, and b
     st.session_state.set_config =True
 
 from utils.streamlit_utils import load_parameters, prompt_plex_interval, display_pivot, download_button, \
-    download_db_button, prompt_snapshot_timestamp
+    download_db_button, prompt_snapshot_timestamp, display_multi_stacked_bars
 
 pd.options.mode.chained_assignment = None
 st.session_state.parameters = load_parameters()
@@ -109,22 +107,13 @@ with risk_history_tab:
     risk_snapshots_within['timestamp'] = pd.to_datetime(risk_snapshots_within['timestamp'], unit='s', utc=True)
     risk_snapshots_within['underlying'] = risk_snapshots_within['asset'].map(
             st.session_state.pnl_explainer.categories)
-    '''
-    plot timeseries of explain by some staked_columns
-    '''
-    categoricals = ['underlying', 'asset', 'protocol', 'chain', 'hold_mode', 'type']
-    values = ['value']
-    rows = ['timestamp']
-    stacking_field = st.selectbox("granularity field", categoricals, index=2)
-    totals = pd.pivot_table(risk_snapshots_within, values=values, columns=[stacking_field], index=rows, aggfunc='sum')
-    totals = totals.stack().reset_index()
 
-    fig = px.bar(totals, x=rows[0], y=values[0],
-                 color=stacking_field, title='value',
-                 barmode='stack')
-    min_dt = 4 * 3600  # 4h
-    fig.update_traces(width=min_dt * 1000)
-    st.plotly_chart(fig, use_container_width=True)
+    display_multi_stacked_bars(risk_snapshots_within,
+                               categoricals=['underlying', 'asset', 'protocol', 'chain', 'hold_mode', 'type'],
+                               values=['value'],
+                               rows=['timestamp'],
+                               default_stacking_field='protocol',
+                               default_row_field='all')
 
     download_button(risk_snapshots_within, file_name='risk_history.csv', label='Download risk history')
 
@@ -134,10 +123,9 @@ with pnl_tab:
     ## display_pivot plex
     st.subheader("Pnl Explain")
 
-    st.latex(r'PnL_{\text{full delta}} = \sum (P_{\text{asset}}^1-P_{\text{asset}}^0) \times N^{\text{start}}')
     st.latex(r'PnL_{\text{delta}} = \sum (\frac{P_{\text{underlying}}^1}{P_{\text{underlying}}^0}-1) \times N^{\text{start}} \frac{P_{\text{underlying}}^0}{P_{\text{asset}}^0}')
-    st.latex(r'PnL_{\text{basis}} = PnL_{\text{full delta}} - PnL_{\text{delta}}')
-    st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{\text{end}}')
+    st.latex(r'PnL_{\text{basis}} = \sum (P_{\text{asset}}^1-P_{\text{asset}}^0) \times N^{\text{start}} - PnL_{\text{delta}}')
+    st.latex(r'PnL_{\text{amt\_chng}} = \sum \Delta N \times P^{1}')
 
     start_snapshot = st.session_state.plex_db.query_table_at(addresses, pnl_start_timestamp, "snapshots")
     end_snapshot = st.session_state.plex_db.query_table_at(addresses, pnl_end_timestamp, "snapshots")
@@ -166,8 +154,10 @@ with pnl_tab:
     download_button(st.session_state.transactions, file_name='tx.csv', label="Download tx data")
 
 with pnl_history_tab:
+    pnl_history_start_timestamp, pnl_history_end_timestamp = prompt_plex_interval(st.session_state.plex_db, addresses, nonce='pnl_history',
+                                                                  default_dt=timedelta(days=7))
     # snapshots
-    pnl_snapshots_within = st.session_state.plex_db.query_table_between(st.session_state.parameters['profile']['addresses'], pnl_start_timestamp, pnl_end_timestamp, "snapshots")
+    pnl_snapshots_within = st.session_state.plex_db.query_table_between(st.session_state.parameters['profile']['addresses'], pnl_history_start_timestamp, pnl_history_end_timestamp, "snapshots")
     # explains and transactions btw snapshots
     explain_list = []
     transactions_list = []
@@ -184,46 +174,17 @@ with pnl_history_tab:
         transactions = st.session_state.plex_db.query_table_between(addresses, start, end, "transactions")
         transactions = st.session_state.pnl_explainer.format_transactions(start, end, transactions)
         transactions_list.append(transactions)
-    explains = pd.concat(explain_list, axis=0, ignore_index=True)
+    explain_history = pd.concat(explain_list, axis=0, ignore_index=True)
     tx_pnl = pd.concat(transactions_list, axis=0, ignore_index=True)
 
-    '''
-    plot timeseries of explain by some staked_columns
-    '''
-    categoricals = ['underlying', 'asset', 'protocol', 'pnl_bucket', 'chain', 'hold_mode', 'type']
-    values = ['pnl']
-    rows = ['timestamp_end']
-
-    # define stacking variable
-    stacking_field = st.selectbox("granularity field", categoricals, index=2)
-    row_field = st.selectbox("rows field", [f for f in categoricals if f is not stacking_field], index=2)
-
-    # define filters
-    filtering = {}
-    filter_cols = [f for f in categoricals if f not in [row_field, stacking_field]]
-    filter_st_columns = st.columns(len(filter_cols))
-    for filter_col, filter_st_col in zip(filter_cols, filter_st_columns):
-        with filter_st_col:
-            if prompt := st.multiselect(label=filter_col, default='all', options=list(explains[filter_col].unique())+['all']):
-                filtering[filter_col] = prompt
-
-    for row in explains[row_field].unique():
-        df = explains[explains[row_field] == row]
-        df = df[explains.apply(lambda x: all(x[col] in selection
-                                                         for col, selection in filtering.items()
-                                                         if selection != ['all']),
-                                           axis=1)]
-
-        # pivot and display
-        totals = pd.pivot_table(df, values=values, columns=[stacking_field], index=rows, aggfunc='sum').cumsum()
-        totals = totals.stack().reset_index()
-
-        fig = px.bar(totals, x=rows[0], y=values[0],
-                     color=stacking_field, title=f'cum_pnl by {stacking_field}\n{row_field}={row}',
-                     barmode='stack')
-        min_dt = 4*3600 # 4h
-        fig.update_traces(width=min_dt*1000)
-        st.plotly_chart(fig, use_container_width=True)
+    display_multi_stacked_bars(explain_history,
+                               categoricals=['underlying', 'asset', 'protocol', 'pnl_bucket', 'chain',
+                                             'hold_mode', 'type'],
+                               values=['pnl'],
+                               rows=['timestamp_end'],
+                               default_stacking_field='protocol',
+                               default_row_field='pnl_bucket',
+                               cum_sum=True)
 
     download_button(pnl_snapshots_within, file_name='snapshot.csv', label='Download pnl history')
 
