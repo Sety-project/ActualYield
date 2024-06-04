@@ -1,9 +1,11 @@
 name: Deploy actualyield to ECR
 
 on:
-
+ 
   push:
-    branches: [ main ]
+    branches: [ master ]
+    paths:
+      - 'actualyield/**'
 
 jobs:
   
@@ -11,7 +13,6 @@ jobs:
     
     name: Build Image
     runs-on: ubuntu-latest
-
 
     steps:
 
@@ -34,7 +35,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: actualyield
         IMAGE_TAG: latest
-        DOCKERFILE: Dockerfile
+        DOCKERFILE: actualyield/Dockerfile
       run: |
         docker build . -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f $DOCKERFILE
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
