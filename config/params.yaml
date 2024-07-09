@@ -3,10 +3,10 @@ profile:
   addresses:
     - "0x7f8DA5FBD700a134842109c54ABA576D5c3712b8"
     - "0xFaf2A8b5fa78cA2786cEf5F7e19f6942EC7cB531"
-    - "0x1778767436111ec0AdB10F9BA4f51A329D0e7770"  # fasanara
-    - "0x5c9e30def85334e587cf36eb07bdd6a72bf1452d"  # tradefi whale
-    - "0xef80c44d996ebac95aa62589986fb3fcdfe3f7d9"  # nemo
-    - "0xc47fae56f3702737b69ed615950c01217ec5c7c8" # fulmer
+#    - "0x1778767436111ec0AdB10F9BA4f51A329D0e7770"  # fasanara
+#    - "0x5c9e30def85334e587cf36eb07bdd6a72bf1452d"  # tradefi whale
+#    - "0xef80c44d996ebac95aa62589986fb3fcdfe3f7d9"  # nemo
+#    - "0xc47fae56f3702737b69ed615950c01217ec5c7c8" # fulmer
 input_data:
   raw_data_db:
     type: S3JsonRawDataDB
