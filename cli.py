@@ -22,7 +22,7 @@ if __name__ == '__main__':
 
         # tamper with the db file name to add hash of debank key
         plex_db_params = copy.deepcopy(parameters['input_data']['plex_db'])
-        plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db', f"_{parameters['profile']['debank_key']}_new.db")
+        plex_db_params['remote_file'] = plex_db_params['remote_file'].replace('.db', f"_{parameters['profile']['debank_key']}.db")
 
         plex_db: SQLiteDB = SQLiteDB(plex_db_params, secrets)
         # empty the plex.db file
