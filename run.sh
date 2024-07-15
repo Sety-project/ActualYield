@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 ./cli.py snapshot
+python3 /home/ubuntu/actualyield/cli.py snapshot
