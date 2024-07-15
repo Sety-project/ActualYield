@@ -19,15 +19,12 @@ ENV DB_PATH=$HOME/actualyield/data
 ENV PYTHONPATH=$ACTUALYIELD_PATH:$HOME
 
 RUN mkdir -p $ACTUALYIELD_PATH
-RUN chown -R $USER $ACTUALYIELD_PATH
+RUN chown -R u+x $USER $ACTUALYIELD_PATH
 
 WORKDIR $ACTUALYIELD_PATH
 
 COPY --chown=$USER:$USER / $ACTUALYIELD_PATH
-USER $USER
 RUN pip3 install -Ur $ACTUALYIELD_PATH/requirements.txt
-
-RUN chmod +x $ACTUALYIELD_PATH/run.sh
 
 # Run container as root to be able to create and write in folders
 ENTRYPOINT [ "./run.sh" ]
