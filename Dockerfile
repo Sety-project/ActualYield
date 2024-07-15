@@ -30,5 +30,4 @@ RUN pip3 install -Ur $ACTUALYIELD_PATH/requirements.txt
 RUN chmod +x $ACTUALYIELD_PATH/run.sh
 
 # Run container as root to be able to create and write in folders
-USER root
 ENTRYPOINT [ "./run.sh" ]
