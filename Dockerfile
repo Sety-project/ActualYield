@@ -26,5 +26,5 @@ COPY --chown=$USER:$USER / $ACTUALYIELD_PATH
 RUN pip3 install -Ur $ACTUALYIELD_PATH/requirements.txt
 
 # Run container as root to be able to create and write in folders
-USER $USER
+USER root
 ENTRYPOINT [ "./run.sh" ]
